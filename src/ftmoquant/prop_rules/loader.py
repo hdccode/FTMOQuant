@@ -6,7 +6,6 @@ from datetime import date, time
 from decimal import Decimal, InvalidOperation
 from enum import Enum
 from pathlib import Path
-from typing import TypeVar
 from urllib.parse import urlsplit
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
@@ -24,7 +23,6 @@ from ftmoquant.prop_rules.models import (
     Provider,
 )
 
-EnumType = TypeVar("EnumType", bound=Enum)
 _TIME_PATTERN = re.compile(r"\d{2}:\d{2}")
 
 
@@ -196,7 +194,9 @@ def _percentage(value: object, field: str) -> Decimal:
     return percentage
 
 
-def _enum(enum_type: type[EnumType], value: object, field: str) -> EnumType:
+def _enum[EnumType: Enum](
+    enum_type: type[EnumType], value: object, field: str
+) -> EnumType:
     if not isinstance(value, str):
         raise ConfigValidationError(f"{field} must be a string")
     try:

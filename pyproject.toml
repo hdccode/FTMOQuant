@@ -7,8 +7,10 @@ name = "ftmoquant"
 version = "0.1.0"
 description = "Quantitative trading research tooling for FTMO."
 readme = "README.md"
-requires-python = ">=3.11"
+requires-python = ">=3.12,<3.13"
 dependencies = [
+    "nautilus-trader==2.0.0rc2",
+    "pandas>=2.3.3,<4.0.0",
     "pyyaml>=6.0.3",
 ]
 
@@ -24,12 +26,12 @@ dev = [
 testpaths = ["tests"]
 
 [tool.ruff]
-target-version = "py311"
+target-version = "py312"
 
 [tool.ruff.lint]
 select = ["E", "F", "I", "UP"]
 
 [tool.mypy]
-python_version = "3.11"
+python_version = "3.12"
 strict = true
 packages = ["ftmoquant"]
