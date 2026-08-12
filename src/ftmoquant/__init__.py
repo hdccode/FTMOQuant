@@ -1,0 +1,1 @@
+"""FTMOQuant package."""
