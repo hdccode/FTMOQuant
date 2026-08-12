@@ -8,13 +8,16 @@ version = "0.1.0"
 description = "Quantitative trading research tooling for FTMO."
 readme = "README.md"
 requires-python = ">=3.11"
-dependencies = []
+dependencies = [
+    "pyyaml>=6.0.3",
+]
 
 [dependency-groups]
 dev = [
     "mypy>=1.15",
     "pytest>=8.3",
     "ruff>=0.11",
+    "types-pyyaml>=6.0.12.20260724",
 ]
 
 [tool.pytest.ini_options]

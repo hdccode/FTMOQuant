@@ -1,0 +1,31 @@
+schema_version: 1
+rule_set_id: ftmo_2step_swing
+version: 2026-08
+provider: ftmo
+program: two_step
+account_type: swing
+verified_on: "2026-08-12"
+
+phases:
+  challenge:
+    profit_target: "0.10"
+    minimum_trading_days: 4
+    evaluation_period_days: null
+  verification:
+    profit_target: "0.05"
+    minimum_trading_days: 4
+    evaluation_period_days: null
+
+loss_limits:
+  maximum_daily_loss: "0.05"
+  maximum_loss: "0.10"
+  maximum_loss_type: static
+
+daily_reset:
+  time: "00:00"
+  timezone: Europe/Prague
+
+source_urls:
+  - https://ftmo.com/en/trading-objectives/
+  - https://ftmo.com/en/2-step-challenge/
+  - https://ftmo.com/faq/ftmo-swing-account-type/
