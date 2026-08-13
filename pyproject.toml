@@ -9,6 +9,7 @@ description = "Quantitative trading research tooling for FTMO."
 readme = "README.md"
 requires-python = ">=3.12,<3.13"
 dependencies = [
+    "arch==8.0.0",
     "nautilus-trader==2.0.0rc2",
     "pandas>=2.3.3,<4.0.0",
     "pyarrow>=16.1,<23.0.0",

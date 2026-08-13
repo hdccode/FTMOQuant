@@ -21,6 +21,7 @@ fixture result is asserted across two independent engine instances.
 | Project | Repository | License | Intended role | Adoption status |
 | --- | --- | --- | --- | --- |
 | NautilusTrader | [nautechsystems/nautilus_trader](https://github.com/nautechsystems/nautilus_trader) | LGPL-3.0-or-later | Event-driven backtest/live trading core | Adopt provisionally at exactly PyPI `2.0.0rc2`; the locked macOS ARM64 wheel is SHA-256 `a271f0cfd82a75ade4da19b6ead495acb01c1b19de6b1a82da414950887cdd52` |
+| arch | [bashtage/arch](https://github.com/bashtage/arch) | NCSA | Statistical bootstrap and multiple-comparison procedures | Adopt at exactly `8.0.0` for G0.8; sampling, confidence intervals, block-length estimation, SPA/Reality Check, and MCS remain native arch operations |
 | tradedesk-dukascopy | [radiusred/tradedesk-dukascopy](https://github.com/radiusred/tradedesk-dukascopy) | Apache-2.0 | Dukascopy BI5 acquisition, recovery, decoding, scale probe, and 1-minute export | Adopt at exactly `1.0.0` / commit `b8fb503c9291d6e265949d008e288b76b68fb852`; FTMOQuant calls its public export CLI contract and retains its CSV metadata sidecars |
 | LEAN | [QuantConnect/Lean](https://github.com/QuantConnect/Lean) | Apache-2.0 | Full event-driven trading engine alternative | Not adopted; .NET-centric runtime adds operational weight to this Python project |
 | hftbacktest | [nkaz001/hftbacktest](https://github.com/nkaz001/hftbacktest) | MIT | Latency-oriented backtest architecture reference | Reference-only for G0.7; no dependency, code, matching engine, or accounting implementation was adopted |
@@ -256,6 +257,42 @@ order-initialization UUIDs remain random even with `use_random_ids=False`.
 G0.7 retains deterministic native venue-order, trade, and position IDs and
 removes only those transport UUID columns/keys from the immutable semantic CSV
 exports and hashes. Economic fill, position, and account content is unchanged.
+
+## G0.8 statistical resampling adoption
+
+G0.8 adopts [`bashtage/arch`](https://github.com/bashtage/arch) at exactly
+`8.0.0`, under its NCSA license. The isolated research-statistics module calls
+`StationaryBootstrap.conf_int`, `optimal_block_length`, `SPA` or
+`RealityCheck`, and `MCS` directly. FTMOQuant validates ordering, alignment,
+finite values, unique model labels, explicit seeds and resampling parameters;
+it does not implement their sampling or test mathematics. Block-length
+estimates are returned to the caller and are never substituted into a later
+procedure automatically.
+
+The installed `8.0.0` package was inspected before implementation. Exact API
+signatures and behavior were reviewed in:
+
+- `arch/bootstrap/base.py`: `optimal_block_length`, `IIDBootstrap.conf_int`,
+  and `StationaryBootstrap`.
+- `arch/bootstrap/multiple_comparison.py`: `SPA`, `RealityCheck`, and `MCS`,
+  including `compute`, `pvalues`, `better_models`, `included`, and `excluded`.
+- `arch/bootstrap/__init__.py`: the public exports used by FTMOQuant.
+- `arch-8.0.0.dist-info/METADATA` and `LICENSE.md`: installed version and NCSA
+  licensing.
+- The upstream 8.0.0 API pages for
+  [`StationaryBootstrap`](https://bashtage.github.io/arch/bootstrap/generated/arch.bootstrap.StationaryBootstrap.html),
+  [`SPA`](https://bashtage.github.io/arch/multiple-comparison/generated/arch.bootstrap.SPA.html),
+  and the 8.0.0 API index entries for `optimal_block_length` and `MCS`.
+
+Fixed-fixture tests compare every wrapper with a direct seeded arch call. No
+substantive upstream test or source code was copied. The wrappers do not know
+about final holdouts, rank or select models, translate losses from returns, or
+turn a statistical result into a trading decision. Ordinary performance
+metrics remain Nautilus analysis responsibilities.
+
+`empyrical-reloaded` and QuantStats remain deferred/reference-only and are not
+dependencies in G0.8. Neither is needed for the adopted resampling and
+multiple-comparison scope.
 
 ## Known evaluation limits
 
