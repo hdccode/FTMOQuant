@@ -329,6 +329,33 @@ native bar/indicator lifecycle in G1.2. Because the reviewed current upstream
 commit is newer than the pinned rc2 artifact, installed rc2 stubs remain the
 runtime authority.
 
+## G1.2 native strategy implementation audit
+
+The bounded G1.2 audit again selected only the already-pinned
+`nautilus-trader==2.0.0rc2`; no second engine or indicator dependency would
+reduce bespoke code or improve fidelity. The installed rc2 generated stubs
+were treated as runtime authority for `Strategy`, `StrategyConfig`, completed
+bar callbacks and subscriptions, `ExponentialMovingAverage`,
+`AverageTrueRange`, `MovingAverageType.Exponential`, indicator `initialized`
+and `reset` state, market-order creation, fill callbacks, and native position
+closure.
+
+Current upstream corroboration reviewed
+[`nautechsystems/nautilus_trader`](https://github.com/nautechsystems/nautilus_trader)
+at commit
+[`3e34ddb79ea2961ea6ce230cf4e80ef2fb292a32`](https://github.com/nautechsystems/nautilus_trader/commit/3e34ddb79ea2961ea6ce230cf4e80ef2fb292a32),
+under LGPL-3.0-or-later, including the public indicator declarations,
+`register_indicator_for_bars`, strategy lifecycle callbacks, and native order
+factory interfaces. No upstream source or test text was copied.
+
+Native bar registration cannot correctly produce this hypothesis's required
+synchronized BID/ASK midpoint: registering against one raw side uses the wrong
+price and registering against both updates twice. FTMOQuant therefore retains
+native indicator calculation and lifecycle but feeds each indicator exactly
+once through its public `update_raw` API after a valid midpoint pair. Missing
+or invalid pairs reset affected indicator state rather than carrying values.
+This is the smallest adapter necessary to preserve the frozen G1.1 semantics.
+
 `empyrical-reloaded` and QuantStats remain deferred/reference-only and are not
 dependencies in G0.8. Neither is needed for the adopted resampling and
 multiple-comparison scope.
