@@ -20,6 +20,7 @@ dependencies = [
 [project.scripts]
 ftmoquant-ingest-eurusd = "ftmoquant.data.dukascopy:main"
 ftmoquant-derive-eurusd-bars = "ftmoquant.data.derived_bars:main"
+ftmoquant-qa-eurusd-coverage = "ftmoquant.data.session_coverage:main"
 
 [dependency-groups]
 dev = [

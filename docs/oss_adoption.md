@@ -191,6 +191,80 @@ window makes coverage `incomplete`; any otherwise gap-free no-update window is
 identify a legitimate market closure. Only datasets with no dropped windows
 and at least one bar in all four required series are marked research-ready.
 
+## G1 data-readiness session coverage bridge
+
+The G1 bridge adds provider-aware coverage classification without changing the
+G0.5 source files, catalog bars, missing-interval report, BID/ASK validation, or
+the G0.6 derivation and conservative readiness fields. It writes a separate
+`ftmoquant_session_coverage.json`, bound by SHA-256 to both existing manifests.
+Its final `session_aware_research_ready` requires the G0.6
+`derived_bar_integrity_valid` and `bid_ask_derived_coverage_matches` flags, at
+least one bar in all four established 1H/4H BID/ASK series, and zero incomplete
+paired source minutes during expected-open periods. Thus a complete multi-day
+dataset may pass across an ordinary weekend even though the unchanged G0.6
+`coverage_status` remains `unclassified`. No bar is filled, interpolated,
+removed, or rewritten.
+
+### Targeted GitHub reuse audit
+
+The audit was performed before implementation against these exact public
+revisions:
+
+| Candidate | Reviewed revision | Finding |
+| --- | --- | --- |
+| NautilusTrader | [`8ecbd4b5785b15389c9e2d626a99723dcde5a0ee`](https://github.com/nautechsystems/nautilus_trader/blob/8ecbd4b5785b15389c9e2d626a99723dcde5a0ee/crates/trading/src/sessions.rs) on `develop`; installed `2.0.0rc2` stubs and runtime also inspected | `ForexSession.NEW_YORK`, `fx_local_from_utc`, and the four `fx_prev/next_start/end` helpers correctly use `America/New_York` and place the regional New York session end at 17:00 local. They model weekday regional sessions, not Dukascopy's continuous Sunday-Friday provider week or provider offline domains, so they are referenced as corroboration but are not used for classification. |
+| QuantConnect LEAN | [`278fcb3d1b815b63ccadba68d7ae54422e34b792`](https://github.com/QuantConnect/Lean/blob/278fcb3d1b815b63ccadba68d7ae54422e34b792/Data/market-hours/market-hours-database.json) | Its calendars are broker-specific: Interactive Brokers uses a 17:00 New York weekly boundary, FXCM adds its own holidays and exceptions, and OANDA has daily 16:58-17:03 pauses. None establishes Dukascopy history. Adding LEAN would create a second calendar framework without provider authority, so it was not adopted. |
+| tradedesk-dukascopy | [`b8fb503c9291d6e265949d008e288b76b68fb852`](https://github.com/radiusred/tradedesk-dukascopy/blob/b8fb503c9291d6e265949d008e288b76b68fb852/scripts/dukascopy_audit.py) | Its audit helper hardcodes Sunday 22:00 UTC through Friday 22:00 UTC. This ignores the summer schedule and makes both US DST-transition weekends wrong, so the mask was explicitly not reused. The pinned package remains the acquisition/decoding boundary described in G0.5. |
+
+No new dependency or generic 24/5 calendar was adopted. The implementation
+uses standard-library `zoneinfo.ZoneInfo("America/New_York")`, which is the
+smallest mechanism that preserves the provider's stated US Eastern DST
+semantics.
+
+### Dukascopy session provenance and classification
+
+Dukascopy's [general trading hours](https://www.dukascopy.com/swiss/english/forex/forex-trading-accounts/link/)
+state that most instruments open Sunday at 21:00 GMT in summer / 22:00 GMT in
+winter and close Friday at the matching hour. Dukascopy's
+[2019 DST notice](https://www.dukascopy.com/swiss/english/about/ournews/change-to-daylight-saving-time-dbl201384)
+removes the ambiguity in “summer”: the FX trading day ends at 17:00 New York
+time, and the UTC change follows the US Eastern clock. Policy
+`dukascopy-eurusd-ny-close-v1` therefore treats EUR/USD source minutes as
+expected-open from Sunday 17:00 `America/New_York` inclusive through Friday
+17:00 local exclusive. This maps to 21:00 UTC under EDT and 22:00 UTC under
+EST. On a US spring-transition weekend the recurring closure is 47 hours; on
+an autumn-transition weekend it is 49 hours.
+
+The policy is conservatively valid only from the explicit 10 March 2019 change
+forward. Earlier requested intervals fail closed instead of assuming that the
+same rule held historically. Dukascopy's JForex
+[market-hours API documentation](https://www.dukascopy.com/wiki/en/development/strategy-api/instruments/market-hours/)
+also establishes that `IDataService.getOfflineTimeDomains` supplies historical
+and upcoming provider offline periods. Those records are not present in the
+G0.5 artifacts and are not fetched or synthesized by this bridge. Consequently
+only recurring weekend minutes can be classified
+`expected_market_closed`; a holiday, exceptional provider shutdown, or any
+other absent expected-open minute is `unexplained_missing` until authoritative
+offline-domain evidence is acquired and versioned.
+
+Coverage is a paired-minute property. A minute counts as observed only when
+both BID and ASK exist. During an expected-open period, no update, BID-only, or
+ASK-only coverage is unexplained; exact intervals retain the missing side or
+sides. Expected closures are reported separately with inclusive interval
+boundaries and counts, and neither class is filled. The manifest records the
+requested half-open UTC interval, expected-open count, paired observed count,
+expected-closure count, unexplained count and exact intervals, source and
+derived manifest hashes, the full session/source descriptions, and a semantic
+SHA-256 over canonical JSON excluding only the hash field itself. It contains
+no fetch timestamp or wall-clock timestamp.
+
+A fixed UTC weekday mask is insufficient because it blesses one season while
+misclassifying the other and cannot represent the one-hour difference between
+the Friday and Sunday boundaries on US DST transition weekends. A generic
+calendar's holiday list is also unsafe: provider-specific offline intervals
+can differ, and unverified closure assumptions would convert missing source
+data into false research readiness.
+
 ## G0.7 native execution-harness adoption
 
 G0.7 keeps the validated G0.5 one-minute external BID and ASK bars as the only
