@@ -1,6 +1,7 @@
 import hashlib
 import json
 from collections.abc import Sequence
+from dataclasses import replace
 from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 from pathlib import Path
@@ -24,6 +25,7 @@ from ftmoquant.backtest.execution_harness import (
     RolloverConfig,
     RolloverMode,
     RunMode,
+    _validate_profile,
     run_eurusd_execution,
 )
 from ftmoquant.data.dukascopy import SourceBar, _eurusd_instrument, _to_nautilus_bars
@@ -264,6 +266,50 @@ def test_manifest_contains_required_provenance_and_reports(tmp_path: Path) -> No
         _run(root, tmp_path / "run")
 
 
+@pytest.mark.parametrize(
+    "evidence",
+    [None, "a" * 63, "a" * 65, "g" * 64],
+)
+def test_broker_calibrated_profile_rejects_missing_or_malformed_evidence(
+    evidence: str | None,
+) -> None:
+    profile = replace(
+        _profile(),
+        calibration_status=CalibrationStatus.BROKER_CALIBRATED,
+        broker_evidence_sha256=evidence,
+    )
+
+    with pytest.raises(ExecutionValidationError, match="evidence SHA-256"):
+        _validate_profile(profile)
+
+
+def test_broker_calibrated_profile_accepts_valid_sha256() -> None:
+    profile = replace(
+        _profile(),
+        calibration_status=CalibrationStatus.BROKER_CALIBRATED,
+        broker_evidence_sha256="0123456789abcdef" * 4,
+    )
+
+    _validate_profile(profile)
+
+
+@pytest.mark.parametrize(
+    "status",
+    [CalibrationStatus.UNCALIBRATED, CalibrationStatus.PROXY],
+)
+def test_non_broker_calibrated_profile_rejects_broker_evidence(
+    status: CalibrationStatus,
+) -> None:
+    profile = replace(
+        _profile(),
+        calibration_status=status,
+        broker_evidence_sha256="0123456789abcdef" * 4,
+    )
+
+    with pytest.raises(ExecutionValidationError, match="only valid"):
+        _validate_profile(profile)
+
+
 def _run(
     root: Path,
     output: Path,
@@ -292,14 +338,11 @@ def _run(
             ),
         )
         calibration = CalibrationStatus.PROXY
-    profile = ExecutionProfile(
+    profile = replace(
+        _profile(),
         fill_on_limit_probability=limit_fill,
         adverse_slippage_probability=slippage,
-        random_seed=7,
-        base_latency_ns=0,
         insert_latency_ns=insert_latency_ns,
-        update_latency_ns=0,
-        cancel_latency_ns=0,
         fee=FeeModelConfig(
             kind=FeeModelKind.FIXED,
             commission=fixed_fee,
@@ -332,6 +375,27 @@ def _run(
         mode=mode,
     )
     return run_eurusd_execution(request)
+
+
+def _profile() -> ExecutionProfile:
+    return ExecutionProfile(
+        fill_on_limit_probability=Decimal(1),
+        adverse_slippage_probability=Decimal(0),
+        random_seed=7,
+        base_latency_ns=0,
+        insert_latency_ns=0,
+        update_latency_ns=0,
+        cancel_latency_ns=0,
+        fee=FeeModelConfig(
+            kind=FeeModelKind.FIXED,
+            commission=Decimal(0),
+            currency="USD",
+            charge_commission_once=True,
+        ),
+        rollover=RolloverConfig(mode=RolloverMode.DISABLED),
+        adaptive_high_low_ordering=False,
+        calibration_status=CalibrationStatus.UNCALIBRATED,
+    )
 
 
 def _catalog_root(
