@@ -23,10 +23,8 @@ LOSS_ORIENTATION = "lower_loss_is_better"
 ConfidenceIntervalMethod = Literal[
     "basic", "percentile", "studentized", "norm", "bc", "bca"
 ]
-ConfidenceIntervalTail = Literal["two", "upper", "lower"]
-BootstrapSampling = Literal[
-    "nonparametric", "semi-parametric", "semi", "parametric", "semiparametric"
-]
+ConfidenceIntervalTail = Literal["two"]
+BootstrapSampling = Literal["nonparametric"]
 BootstrapType = Literal[
     "stationary", "sb", "circular", "cbb", "moving block", "mbb"
 ]
@@ -170,6 +168,14 @@ def stationary_bootstrap_confidence_interval(
         raise ResearchStatisticsValidationError(
             "studentize_repetitions must be positive"
         )
+    if config.sampling != "nonparametric":
+        raise ResearchStatisticsValidationError(
+            "stationary mean CI sampling must be nonparametric"
+        )
+    if config.tail != "two":
+        raise ResearchStatisticsValidationError(
+            "stationary mean CI tail must be two-sided"
+        )
     bootstrap = StationaryBootstrap(config.block_size, series, seed=config.seed)
     interval = bootstrap.conf_int(
         _sample_mean,
@@ -205,6 +211,16 @@ def estimate_optimal_block_length(observations: pd.Series) -> BlockLengthResult:
         )
     estimates = arch_optimal_block_length(series)
     row = estimates.iloc[0]
+    stationary = float(row["stationary"])
+    circular = float(row["circular"])
+    if not np.isfinite(stationary) or not np.isfinite(circular):
+        raise ResearchStatisticsValidationError(
+            "optimal block-length estimates must be finite"
+        )
+    if stationary <= 0.0 or circular <= 0.0:
+        raise ResearchStatisticsValidationError(
+            "optimal block-length estimates must be positive"
+        )
     return BlockLengthResult(
         arch_version=ARCH_VERSION,
         procedure="optimal_block_length",
@@ -213,8 +229,8 @@ def estimate_optimal_block_length(observations: pd.Series) -> BlockLengthResult:
         observation_count=len(series),
         series_label=cast(str, series.name),
         input_content_sha256=_hash_series(series),
-        stationary=float(row["stationary"]),
-        circular=float(row["circular"]),
+        stationary=stationary,
+        circular=circular,
     )
 
 
@@ -235,6 +251,10 @@ def spa_reality_check(
     if not 0.0 < config.significance_level < 1.0:
         raise ResearchStatisticsValidationError(
             "significance_level must be strictly between 0 and 1"
+        )
+    if config.procedure not in {"SPA", "Reality Check"}:
+        raise ResearchStatisticsValidationError(
+            "procedure must be SPA or Reality Check"
         )
     procedure_type = SPA if config.procedure == "SPA" else RealityCheck
     procedure = procedure_type(
@@ -277,11 +297,15 @@ def model_confidence_set(losses: pd.DataFrame, config: MCSConfig) -> MCSResult:
 
     _require_arch_version()
     frame = _validate_loss_frame(losses)
+    if len(frame.columns) < 2:
+        raise ResearchStatisticsValidationError("MCS requires at least two models")
     _validate_resampling(config.block_size, config.repetitions, config.seed, len(frame))
     if not 0.0 < config.test_size < 1.0:
         raise ResearchStatisticsValidationError(
             "test_size must be strictly between 0 and 1"
         )
+    if config.method not in {"R", "max"}:
+        raise ResearchStatisticsValidationError("MCS method must be R or max")
     procedure = MCS(
         frame,
         size=config.test_size,

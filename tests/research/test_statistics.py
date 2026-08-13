@@ -1,11 +1,19 @@
 import json
-from dataclasses import asdict
+from dataclasses import asdict, replace
+from typing import Any, cast
 
 import numpy as np
 import pandas as pd  # type: ignore[import-untyped]
 import pytest
-from arch.bootstrap import MCS, SPA, StationaryBootstrap, optimal_block_length
+from arch.bootstrap import (
+    MCS,
+    SPA,
+    RealityCheck,
+    StationaryBootstrap,
+    optimal_block_length,
+)
 
+import ftmoquant.research.statistics as statistics_module
 from ftmoquant.research.statistics import (
     LOSS_ORIENTATION,
     MCSConfig,
@@ -44,6 +52,27 @@ def test_stationary_bootstrap_is_deterministic_and_matches_arch() -> None:
     assert first.upper_bound == float(direct[1, 0])
 
 
+@pytest.mark.parametrize(
+    "sampling",
+    ["semi-parametric", "semi", "semiparametric", "parametric"],
+)
+def test_stationary_mean_ci_rejects_non_nonparametric_sampling(
+    sampling: str,
+) -> None:
+    config = replace(_ci_config(), sampling=cast(Any, sampling))
+
+    with pytest.raises(ResearchStatisticsValidationError, match="nonparametric"):
+        stationary_bootstrap_confidence_interval(_observations(), config)
+
+
+@pytest.mark.parametrize("tail", ["upper", "lower"])
+def test_stationary_mean_ci_rejects_one_sided_tails(tail: str) -> None:
+    config = replace(_ci_config(), tail=cast(Any, tail))
+
+    with pytest.raises(ResearchStatisticsValidationError, match="two-sided"):
+        stationary_bootstrap_confidence_interval(_observations(), config)
+
+
 def test_optimal_block_length_matches_arch_without_applying_estimate() -> None:
     observations = _observations()
 
@@ -53,6 +82,35 @@ def test_optimal_block_length_matches_arch_without_applying_estimate() -> None:
     assert result.stationary == float(direct["stationary"])
     assert result.circular == float(direct["circular"])
     assert not hasattr(result, "selected_block_size")
+
+
+@pytest.mark.parametrize(
+    ("stationary", "circular", "message"),
+    [
+        (float("nan"), 2.0, "finite"),
+        (2.0, float("inf"), "finite"),
+        (0.0, 2.0, "positive"),
+        (2.0, -1.0, "positive"),
+    ],
+)
+def test_unusable_native_block_length_estimates_are_rejected(
+    monkeypatch: pytest.MonkeyPatch,
+    stationary: float,
+    circular: float,
+    message: str,
+) -> None:
+    estimates = pd.DataFrame(
+        {"stationary": [stationary], "circular": [circular]},
+        index=["returns"],
+    )
+    monkeypatch.setattr(
+        statistics_module,
+        "arch_optimal_block_length",
+        lambda observations: estimates,
+    )
+
+    with pytest.raises(ResearchStatisticsValidationError, match=message):
+        estimate_optimal_block_length(_observations())
 
 
 def test_spa_matches_direct_arch_and_preserves_loss_orientation() -> None:
@@ -100,14 +158,43 @@ def test_reality_check_uses_explicit_procedure() -> None:
     )
 
     result = spa_reality_check(benchmark, models, config)
+    direct = RealityCheck(
+        benchmark,
+        models,
+        block_size=config.block_size,
+        reps=config.repetitions,
+        bootstrap=config.bootstrap,
+        studentize=config.studentize,
+        nested=config.nested,
+        seed=config.seed,
+    )
+    direct.compute()
 
     assert result.procedure == "Reality Check"
     assert result.config == config
+    assert result.pvalues == tuple(
+        (str(label), float(value)) for label, value in direct.pvalues.items()
+    )
+    positions = direct.better_models(
+        config.significance_level, config.pvalue_type
+    )
+    assert result.superior_models == tuple(
+        str(models.columns[int(position)]) for position in positions
+    )
 
 
-def test_mcs_matches_direct_arch_without_selecting_winner() -> None:
+def test_invalid_spa_procedure_is_rejected_instead_of_falling_through() -> None:
+    benchmark, models = _losses()
+    config = replace(_spa_config(), procedure=cast(Any, "invalid"))
+
+    with pytest.raises(ResearchStatisticsValidationError, match="procedure"):
+        spa_reality_check(benchmark, models, config)
+
+
+@pytest.mark.parametrize("method", ["R", "max"])
+def test_mcs_matches_direct_arch_without_selecting_winner(method: str) -> None:
     _, losses = _losses()
-    config = _mcs_config()
+    config = replace(_mcs_config(), method=cast(Any, method))
 
     result = model_confidence_set(losses, config)
     direct = MCS(
@@ -128,6 +215,21 @@ def test_mcs_matches_direct_arch_without_selecting_winner() -> None:
         for label, row in direct.pvalues.iterrows()
     )
     assert not hasattr(result, "winner")
+
+
+def test_invalid_mcs_method_is_rejected() -> None:
+    _, losses = _losses()
+    config = replace(_mcs_config(), method=cast(Any, "invalid"))
+
+    with pytest.raises(ResearchStatisticsValidationError, match="method"):
+        model_confidence_set(losses, config)
+
+
+def test_one_model_mcs_is_rejected() -> None:
+    _, losses = _losses()
+
+    with pytest.raises(ResearchStatisticsValidationError, match="at least two"):
+        model_confidence_set(losses[["model-a"]], _mcs_config())
 
 
 def test_input_order_changes_content_hash() -> None:

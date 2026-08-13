@@ -290,6 +290,14 @@ about final holdouts, rank or select models, translate losses from returns, or
 turn a statistical result into a trading decision. Ordinary performance
 metrics remain Nautilus analysis responsibilities.
 
+The G0.8 mean-CI adapter is deliberately bounded to arch's nonparametric,
+two-sided callback contract. Parametric and semi-parametric sampling require a
+different statistic callback signature and are not exposed by this mean-only
+wrapper. SPA/Reality Check procedure names and MCS methods fail closed rather
+than falling through to another native procedure or method. Native optimal
+block-length estimates must be finite and positive or the adapter rejects
+them without substitution, and MCS requires at least two loss-model columns.
+
 `empyrical-reloaded` and QuantStats remain deferred/reference-only and are not
 dependencies in G0.8. Neither is needed for the adopted resampling and
 multiple-comparison scope.
