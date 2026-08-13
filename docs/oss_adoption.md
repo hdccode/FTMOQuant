@@ -310,7 +310,7 @@ seen both BID and ASK with the same `ts_init`. It then schedules a native clock
 alert exactly one nanosecond later. The runner extends only the observation
 horizon by that one nanosecond so the final pair is also observed; source data,
 requested range, matching, and scripted orders are unchanged. This mechanism
-is versioned as `g0.9-2` in the execution manifest. Every observation reads
+is versioned as `g0.9-3` in the execution manifest. Every observation reads
 native state and the final manifest records phase, FTMO day, reset balance,
 both loss floors, counted days, latched terminal status and breach evidence,
 plus a deterministic observation hash.
@@ -324,6 +324,12 @@ alerts established the following ordering:
   each external bar has refreshed native portfolio state by `on_bar`.
 - `OrderFilled` and `PositionOpened` strategy callbacks see the native cache,
   account commission, portfolio, and position updates already applied.
+- A resting order triggered by an incoming external bar fills in exchange
+  processing before that same bar is dispatched to the strategy. In the
+  targeted rc2 probe the fill and position-open timestamps were
+  `2024-01-02T00:02:00Z`, while the bridge still held the completed
+  `00:01:00Z` marks; the BID and ASK callbacks subsequently completed the
+  `00:02:00Z` pair before its `00:02:00.000000001Z` alert.
 - Same-timestamp native timer callbacks are drained before venue modules.
 - `FXRolloverInterestModule` applies its account adjustment during venue-module
   timestamp finalization. A completed-pair alert at `ts_init + 1 ns` therefore
@@ -367,6 +373,18 @@ native Portfolio fallback equity is retained separately as a diagnostic, with
 the completed mark timestamp, BID/ASK closes, authoritative FTMO equity, and
 their difference. Unsupported non-EUR/USD or non-USD settlement/account cases
 are rejected rather than silently converted.
+
+Native fill and position-open callbacks use immediate valuation only when the
+snapshot source already holds a completed pair at least as current as the
+native event timestamp. A phase-1 resting-order fill arriving before strategy
+bar dispatch is queued for the matching pair's existing `+1 ns` observation;
+fees and position state remain native and are read once there. The associated
+`PositionOpened` CE(S)T trading day is recorded immediately from its original
+native timestamp through the overlay's public day-bookkeeping API, without a
+floating-equity read. The eventual paired observation records the deferred fill
+and position-open timestamps for auditability. This coalesces deferred and
+normal paired compliance into one evaluation and cannot present a previous
+minute's liquidation mark as current.
 
 The installed rc2 primitive was verified with a targeted long/short probe. A
 100,000 EUR long opened at ASK 1.10020 and marked at BID 1.05000 produced native

@@ -116,6 +116,116 @@ def test_short_liquidation_equity_equal_floor_then_next_ask_breaches(
     }
 
 
+def test_resting_fill_waits_for_its_completed_pair_and_preserves_open_day(
+    tmp_path: Path,
+) -> None:
+    prices = (
+        Decimal("1.10000"),
+        Decimal("1.09950"),
+        Decimal("1.09950"),
+        Decimal("1.09950"),
+    )
+    root = _catalog_root(
+        tmp_path / "data",
+        _flat_minutes(len(prices)),
+        base_prices=prices,
+        bar_range=Decimal("0.00010"),
+    )
+    plan = ProbePlan(
+        order_kind=ProbeOrderKind.LIMIT,
+        side=ProbeSide.BUY,
+        quantity=Decimal("100000"),
+        entry_bar_index=0,
+        limit_price=Decimal("1.09970"),
+    )
+
+    result = _run(root, tmp_path / "run", plan=plan)
+
+    fill_timestamp = int(
+        datetime.fromisoformat(result.result_summary["fills"][0]["ts_event"])
+        .timestamp()
+        * 1_000_000_000
+    )
+    observations = result.ftmo_observations
+    assert not any(
+        item.trigger
+        in {
+            FtmoObservationTrigger.ORDER_FILL,
+            FtmoObservationTrigger.POSITION_OPENED,
+        }
+        and item.timestamp_ns == fill_timestamp
+        for item in observations
+    )
+    before_fill = next(
+        item
+        for item in observations
+        if item.completed_mark_timestamp_ns == fill_timestamp - 60_000_000_000
+    )
+    settlement = next(
+        item
+        for item in observations
+        if item.completed_mark_timestamp_ns == fill_timestamp
+    )
+    assert before_fill.timestamp_ns < fill_timestamp
+    assert settlement.timestamp_ns == fill_timestamp + 1
+    assert settlement.deferred_order_fill_timestamps_ns == (fill_timestamp,)
+    assert settlement.deferred_position_opened_timestamps_ns == (fill_timestamp,)
+    assert settlement.bid_close == "1.09950"
+    assert settlement.ask_close == "1.09970"
+    assert result.ftmo_evaluation["counted_trading_days"] == ["2024-01-02"]
+
+
+def test_stale_pair_cannot_latch_adversarial_resting_fill_breach(
+    tmp_path: Path,
+) -> None:
+    prices = (
+        Decimal("1.09981"),
+        Decimal("1.10020"),
+        Decimal("1.10020"),
+        Decimal("1.10020"),
+    )
+    root = _catalog_root(
+        tmp_path / "data",
+        _flat_minutes(len(prices)),
+        base_prices=prices,
+        bar_range=Decimal("0.00040"),
+    )
+    plan = ProbePlan(
+        order_kind=ProbeOrderKind.LIMIT,
+        side=ProbeSide.BUY,
+        quantity=Decimal("100000"),
+        entry_bar_index=0,
+        limit_price=Decimal("1.10000"),
+    )
+
+    result = _run(
+        root,
+        tmp_path / "run",
+        plan=plan,
+        fixed_fee=Decimal("4990"),
+    )
+
+    fill_timestamp = int(
+        datetime.fromisoformat(result.result_summary["fills"][0]["ts_event"])
+        .timestamp()
+        * 1_000_000_000
+    )
+    settlement = next(
+        item
+        for item in result.ftmo_observations
+        if item.deferred_order_fill_timestamps_ns == (fill_timestamp,)
+    )
+    # The stale BID would value the new long at 94991 and falsely breach.
+    assert Decimal("95010") + (Decimal("1.09981") - Decimal("1.10000")) * (
+        Decimal("100000")
+    ) == Decimal("94991")
+    assert settlement.completed_mark_timestamp_ns == fill_timestamp
+    assert settlement.bid_close == "1.10020"
+    assert settlement.equity == "95030.00"
+    assert result.ftmo_evaluation["terminal_status"] == "active"
+    assert result.ftmo_evaluation["breach"] is None
+
+
 def test_native_fee_can_trigger_breach_in_fill_callback(tmp_path: Path) -> None:
     root = _catalog_root(tmp_path / "data", _flat_minutes(4), flat_ohlc=True)
 
@@ -133,6 +243,10 @@ def test_native_fee_can_trigger_breach_in_fill_callback(tmp_path: Path) -> None:
     )
     assert fill_observation.balance == "94999.99"
     assert fill_observation.equity == "94999.99"
+    assert fill_observation.completed_mark_timestamp_ns == (
+        fill_observation.timestamp_ns
+    )
+    assert fill_observation.deferred_order_fill_timestamps_ns == ()
     assert result.ftmo_evaluation["breach"] == {
         "reason": "maximum_daily_loss",
         "equity": "94999.99",
@@ -227,7 +341,7 @@ def test_overlay_native_state_reconciles_with_reports_and_result(
 
     manifest = json.loads(result.manifest_path.read_text(encoding="utf-8"))
     assert manifest["ftmo_evaluation"] == result.ftmo_evaluation
-    assert result.ftmo_evaluation["observation_mechanism_version"] == "g0.9-2"
+    assert result.ftmo_evaluation["observation_mechanism_version"] == "g0.9-3"
     assert (
         result.ftmo_evaluation["valuation_mechanism_version"]
         == "g0.9-liquidation-close-1"

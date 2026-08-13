@@ -1081,8 +1081,9 @@ def _ftmo_evaluation_dict(
     observations = [_jsonable(asdict(item)) for item in bridge.observations]
     return {
         "observation_mechanism": (
-            "native fill/position callbacks plus complete BID/ASK pair "
-            "post-settlement native-clock alert"
+            "fresh-pair native fill/position callbacks; pre-bar callbacks "
+            "coalesced into the complete BID/ASK pair post-settlement "
+            "native-clock alert"
         ),
         "observation_mechanism_version": FTMO_OBSERVATION_VERSION,
         "valuation_mechanism": (

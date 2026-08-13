@@ -229,6 +229,12 @@ class NautilusFtmoOverlay:
     def record_position_opened(self, timestamp_ns: int) -> None:
         """Record a qualifying position-open timestamp from Nautilus."""
 
+        self.record_position_opened_day(timestamp_ns)
+        self.refresh(timestamp_ns)
+
+    def record_position_opened_day(self, timestamp_ns: int) -> None:
+        """Count the native opening day without reading floating equity."""
+
         if self._state.status is not FtmoStatus.ACTIVE:
             return
         event_time = _from_ns(timestamp_ns)
@@ -237,7 +243,6 @@ class NautilusFtmoOverlay:
             self._state,
             trading_days=self._state.trading_days | {trading_day},
         )
-        self.refresh(timestamp_ns)
 
     def refresh(self, timestamp_ns: int | None = None) -> None:
         """Evaluate FTMO status against the latest Nautilus-owned snapshot."""

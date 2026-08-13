@@ -22,7 +22,7 @@ from ftmoquant.risk.ftmo_overlay import (
     NautilusFtmoOverlay,
 )
 
-FTMO_OBSERVATION_VERSION = "g0.9-2"
+FTMO_OBSERVATION_VERSION = "g0.9-3"
 FTMO_VALUATION_VERSION = "g0.9-liquidation-close-1"
 FTMO_OBSERVATION_DELAY_NS = 1
 
@@ -49,6 +49,8 @@ class FtmoObservation:
     completed_mark_timestamp_ns: int | None
     bid_close: str | None
     ask_close: str | None
+    deferred_order_fill_timestamps_ns: tuple[int, ...]
+    deferred_position_opened_timestamps_ns: tuple[int, ...]
 
 
 @dataclass(frozen=True, slots=True)
@@ -120,6 +122,14 @@ class PairedBarLiquidationSnapshotSource:
         """Return authoritative FTMO equity using native position valuation."""
 
         return self.valuation().snapshot
+
+    def has_completed_mark_for(self, timestamp_ns: int) -> bool:
+        """Return whether the retained pair is current for a native event."""
+
+        return (
+            self._mark_timestamp_ns is not None
+            and self._mark_timestamp_ns >= timestamp_ns
+        )
 
     def valuation(self) -> LiquidationValuation:
         """Return authoritative and native fallback equity diagnostics."""
@@ -194,6 +204,8 @@ class NautilusFtmoBridge:
         self._bar_closes: dict[int, dict[str, Price]] = {}
         self._scheduled: set[int] = set()
         self._observations: list[FtmoObservation] = []
+        self._deferred_order_fills: list[int] = []
+        self._deferred_position_opens: list[int] = []
 
     @property
     def overlay(self) -> NautilusFtmoOverlay:
@@ -245,12 +257,19 @@ class NautilusFtmoBridge:
     def on_order_filled(self, event: OrderFilled) -> None:
         """Observe a native fill after account commission application."""
 
+        if not self._account_source.has_completed_mark_for(event.ts_event):
+            self._deferred_order_fills.append(event.ts_event)
+            return
         self._overlay.on_order_filled(event)
         self._record(FtmoObservationTrigger.ORDER_FILL, event.ts_event)
 
     def on_position_opened(self, event: PositionOpened) -> None:
         """Count the native position-open day and capture native state."""
 
+        if not self._account_source.has_completed_mark_for(event.ts_event):
+            self._overlay.record_position_opened_day(event.ts_event)
+            self._deferred_position_opens.append(event.ts_event)
+            return
         self._overlay.on_position_opened(event)
         self._record(FtmoObservationTrigger.POSITION_OPENED, event.ts_event)
 
@@ -261,13 +280,42 @@ class NautilusFtmoBridge:
             return
         source_timestamp = event.ts_event - FTMO_OBSERVATION_DELAY_NS
         self._scheduled.discard(source_timestamp)
+        deferred_fills = tuple(
+            timestamp
+            for timestamp in self._deferred_order_fills
+            if timestamp <= source_timestamp
+        )
+        deferred_opens = tuple(
+            timestamp
+            for timestamp in self._deferred_position_opens
+            if timestamp <= source_timestamp
+        )
+        self._deferred_order_fills = [
+            timestamp
+            for timestamp in self._deferred_order_fills
+            if timestamp > source_timestamp
+        ]
+        self._deferred_position_opens = [
+            timestamp
+            for timestamp in self._deferred_position_opens
+            if timestamp > source_timestamp
+        ]
         self._overlay.refresh(event.ts_event)
         self._record(
             FtmoObservationTrigger.PAIRED_BAR_POST_SETTLEMENT,
             event.ts_event,
+            deferred_order_fill_timestamps_ns=deferred_fills,
+            deferred_position_opened_timestamps_ns=deferred_opens,
         )
 
-    def _record(self, trigger: FtmoObservationTrigger, timestamp_ns: int) -> None:
+    def _record(
+        self,
+        trigger: FtmoObservationTrigger,
+        timestamp_ns: int,
+        *,
+        deferred_order_fill_timestamps_ns: tuple[int, ...] = (),
+        deferred_position_opened_timestamps_ns: tuple[int, ...] = (),
+    ) -> None:
         valuation = self._account_source.valuation()
         snapshot = valuation.snapshot
         self._observations.append(
@@ -289,6 +337,12 @@ class NautilusFtmoBridge:
                 ),
                 ask_close=(
                     None if valuation.ask_close is None else str(valuation.ask_close)
+                ),
+                deferred_order_fill_timestamps_ns=(
+                    deferred_order_fill_timestamps_ns
+                ),
+                deferred_position_opened_timestamps_ns=(
+                    deferred_position_opened_timestamps_ns
                 ),
             )
         )
