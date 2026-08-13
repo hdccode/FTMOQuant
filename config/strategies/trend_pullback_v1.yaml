@@ -1,0 +1,115 @@
+schema_version: 1
+strategy_id: trend_pullback_v1
+version: 1.0.0
+status: specified_not_run
+
+instrument:
+  instrument_id: EUR/USD.DUKASCOPY
+  asset_class: fx
+
+data_semantics:
+  price_input: synchronized_bid_ask_ohlc_midpoint
+  bar_completion: completed_only
+  timestamp_policy: decision_at_completed_bar_ts_init
+  missing_data_policy: fail_closed_and_emit_no_signal
+  warmup_boundary_policy: prior_split_context_allowed_no_prior_split_trades
+  bars:
+    signal_bid: EUR/USD.DUKASCOPY-1-HOUR-BID-INTERNAL
+    signal_ask: EUR/USD.DUKASCOPY-1-HOUR-ASK-INTERNAL
+    trend_bid: EUR/USD.DUKASCOPY-4-HOUR-BID-INTERNAL
+    trend_ask: EUR/USD.DUKASCOPY-4-HOUR-ASK-INTERNAL
+
+signal:
+  trend:
+    timeframe: 4h
+    fast_ema_period: 50
+    slow_ema_period: 200
+    long_condition: fast_ema_gt_slow_ema
+    short_condition: fast_ema_lt_slow_ema
+    equality_policy: no_trend
+  pullback:
+    timeframe: 1h
+    ema_period: 20
+    max_armed_bars: 3
+    long_arm: previous_close_gt_previous_ema_and_close_lte_ema
+    long_trigger: armed_and_previous_close_lte_previous_ema_and_close_gt_ema
+    short_arm: previous_close_lt_previous_ema_and_close_gte_ema
+    short_trigger: armed_and_previous_close_gte_previous_ema_and_close_lt_ema
+    expiry_policy: expire_after_max_armed_bars_or_trend_loss
+  volatility:
+    timeframe: 1h
+    atr_period: 14
+    atr_moving_average: exponential
+    atr_value_at_signal: completed_trigger_bar
+
+execution:
+  order_type: market
+  earliest_entry: first_synchronized_1m_pair_strictly_after_signal_close
+  execution_market: canonical_g0_7_bid_ask_harness
+  signal_expiry_minutes: 5
+
+risk:
+  sizing_convention: quantity_sizes_initial_stop_loss_to_one_r_before_costs
+  risk_unit: "1.0"
+  compounding: false
+  ftmo_adjustments: false
+
+exits:
+  stop_atr_multiple: "1.5"
+  target_r_multiple: "2.0"
+  time_exit_bars: 48
+  opposite_signal_policy: ignore_while_position_open
+  same_bar_stop_target_policy: lower_timeframe_path_else_stop_first
+
+positions:
+  max_open_positions: 1
+  pyramiding: false
+  signals_while_open: discard
+  reentry: requires_new_arm_and_trigger_after_flat
+
+research_protocol:
+  split:
+    development_fraction: "0.60"
+    validation_fraction: "0.20"
+    final_holdout_fraction: "0.20"
+    boundary_rule: chronological_whole_utc_days_floor
+    final_holdout_policy: sealed_until_g2
+  metrics:
+    primary: validation_mean_net_r_per_trade
+    supporting:
+      - development_mean_net_r_per_trade
+      - validation_stationary_bootstrap_mean_r_ci
+      - validation_profit_factor
+      - validation_trade_count
+      - validation_max_drawdown_r
+      - net_r_by_calendar_year
+  gates:
+    development_mean_net_r_gt: "0"
+    validation_mean_net_r_gt: "0"
+    validation_ci_level: "0.95"
+    validation_ci_lower_bound_gt: "0"
+    validation_ci_method: bca
+    validation_ci_block_size: 5
+    validation_ci_repetitions: 10000
+    validation_ci_seed: 1729
+    min_development_trades: 100
+    min_validation_trades: 50
+    minimum_validation_profit_factor_gt: "1.0"
+  parameter_family:
+    mode: baseline_only
+    permitted_variants: []
+  falsification:
+    insufficient_trade_count: unresolved_not_pass
+    nonpositive_development: fail
+    nonpositive_validation: fail
+    nonpositive_validation_ci: fail
+    maximum_single_year_net_r_share: "0.50"
+
+provenance:
+  required_fields:
+    - git_commit
+    - strategy_config_sha256
+    - data_manifest_sha256
+    - execution_profile_sha256
+    - engine_version
+    - run_seed
