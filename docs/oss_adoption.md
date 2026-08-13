@@ -116,6 +116,70 @@ instrument are stored only through `ParquetDataCatalog`. PyArrow is a direct
 dependency solely because the v2 wrangler accepts Arrow IPC bytes rather than
 a pandas DataFrame.
 
+## G0.6 native derived-bar adoption
+
+G0.6 uses NautilusTrader `2.0.0rc2` bar-to-bar composite aggregation. Its four
+subscriptions use the upstream `TARGET@SOURCE` syntax directly:
+
+- `EUR/USD.DUKASCOPY-1-HOUR-BID-INTERNAL@1-MINUTE-EXTERNAL`
+- `EUR/USD.DUKASCOPY-1-HOUR-ASK-INTERNAL@1-MINUTE-EXTERNAL`
+- `EUR/USD.DUKASCOPY-4-HOUR-BID-INTERNAL@1-MINUTE-EXTERNAL`
+- `EUR/USD.DUKASCOPY-4-HOUR-ASK-INTERNAL@1-MINUTE-EXTERNAL`
+
+Each target is independently fed eligible bars from the original external
+one-minute series. Nautilus emits its standard target type (without the
+composite suffix), and `ParquetDataCatalog.write_bars` persists those outputs.
+FTMOQuant does not implement OHLC or volume aggregation. Its surrounding logic
+only proves that an aligned target window contains exactly 60 or 240
+consecutive source bars, excludes all other windows before engine replay,
+checks BID/ASK close coverage, verifies callback time against the final source
+close, hashes deterministic outputs, and enforces idempotent catalog writes.
+No FX session mask, holiday calendar, fill, interpolation, or synthetic minute
+is used; in particular, the `tradedesk-dukascopy` fixed-22:00-UTC mask was not
+adopted.
+
+The `DataEngineConfig` is explicit: `time_bars_timestamp_on_close=True`,
+`time_bars_skip_first_non_full_bar=True`,
+`time_bars_build_with_no_updates=False`, `time_bars_build_delay=1` microsecond,
+`time_bars_interval_type=BarIntervalType.LEFT_OPEN`, and no origin offset.
+Default UTC origins therefore close 1H bars on every UTC hour and 4H bars at
+00:00, 04:00, 08:00, 12:00, 16:00, and 20:00 UTC. Stored `ts_event` and
+`ts_init` are the nominal interval close.
+
+The following upstream documentation and tests were reviewed. The public v2
+release-candidate wheel has no matching immutable repository tag, so the
+runtime contract was additionally checked against the installed pinned wheel's
+generated Python stubs and exercised end-to-end; source links identify the
+exact reviewed upstream commit `7f0e93dfa3f09ca165a5f3292a45fafbb5681561`:
+
+- [`docs/concepts/data/index.md`](https://github.com/nautechsystems/nautilus_trader/blob/7f0e93dfa3f09ca165a5f3292a45fafbb5681561/docs/concepts/data/index.md),
+  especially “Composite bars,” “Bar-to-bar example,” and “Time bar
+  configuration,” for composite syntax, standard emitted targets, UTC origin
+  behavior, interval semantics, and `DataEngineConfig` controls.
+- [`docs/concepts/backtesting/bar-execution.md`](https://github.com/nautechsystems/nautilus_trader/blob/7f0e93dfa3f09ca165a5f3292a45fafbb5681561/docs/concepts/backtesting/bar-execution.md),
+  “Internal bar aggregation timing,” for the one-microsecond close-timer delay.
+- [`crates/data/src/aggregation.rs`](https://github.com/nautechsystems/nautilus_trader/blob/7f0e93dfa3f09ca165a5f3292a45fafbb5681561/crates/data/src/aggregation.rs),
+  including upstream tests
+  `test_time_bar_aggregator_left_open_interval`,
+  `test_time_bar_aggregator_no_updates_behavior`,
+  `test_time_bar_skip_first_non_full_bar_drops_partial_bar`,
+  `test_aggregators_standardize_composite_bar_type`, and
+  `test_composite_time_bar_aggregator_uses_standard_timer_name`.
+- [`crates/data/tests/engine.rs`](https://github.com/nautechsystems/nautilus_trader/blob/7f0e93dfa3f09ca165a5f3292a45fafbb5681561/crates/data/tests/engine.rs),
+  for data-engine composite subscription and response routing coverage.
+
+Nautilus rc2 has two related timer details which G0.6 records rather than
+hiding. First, a configured one-microsecond build delay also shifts the native
+bar's `ts_event` and `ts_init` by one microsecond. G0.6 verifies that delayed
+native callback (and therefore availability) is after the final source
+one-minute `ts_init`, then subtracts only that known scheduling delay from the
+two stored timestamps to restore the nominal UTC close; native OHLCV is not
+modified. Second, starting replay exactly on an aligned boundary causes rc2's
+`skip_first_non_full_bar` state to discard that first window even when it is
+complete. Replay starts one nanosecond before the first eligible boundary so
+rc2 sees the full interval while the configured skip remains enabled. Window
+membership validation still independently rejects every partial first window.
+
 ## Known evaluation limits
 
 - The integration surface currently expects its owner to forward native
