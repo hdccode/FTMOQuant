@@ -20,15 +20,46 @@ from tests.backtest.test_execution_harness import (
 )
 
 
-def test_floating_equity_equal_floor_then_next_completed_pair_breaches(
+def test_long_liquidation_equity_corrects_native_portfolio_spread_fallback(
     tmp_path: Path,
 ) -> None:
     prices = (
         Decimal("1.10000"),
         Decimal("1.10000"),
         Decimal("1.05000"),
-        Decimal("1.04999"),
-        Decimal("1.04999"),
+        Decimal("1.05000"),
+    )
+    root = _catalog_root(
+        tmp_path / "data",
+        _flat_minutes(len(prices)),
+        base_prices=prices,
+        bar_range=Decimal(0),
+    )
+
+    result = _run(root, tmp_path / "run", plan=_long_hold())
+
+    paired = _paired_observations(result)
+    assert paired[2].equity == "94980.00"
+    assert paired[2].native_portfolio_equity == "95000.00"
+    assert paired[2].native_minus_ftmo_equity == "20.00"
+    assert result.ftmo_evaluation["terminal_status"] == "breached"
+    assert result.ftmo_evaluation["breach"] == {
+        "reason": "maximum_daily_loss",
+        "equity": "94980.00",
+        "floor": "95000.00",
+        "timestamp_ns": paired[2].timestamp_ns,
+    }
+
+
+def test_long_liquidation_equity_equal_floor_then_next_bid_breaches(
+    tmp_path: Path,
+) -> None:
+    prices = (
+        Decimal("1.10000"),
+        Decimal("1.10000"),
+        Decimal("1.05020"),
+        Decimal("1.05019"),
+        Decimal("1.05019"),
     )
     root = _catalog_root(
         tmp_path / "data",
@@ -41,14 +72,48 @@ def test_floating_equity_equal_floor_then_next_completed_pair_breaches(
 
     paired = _paired_observations(result)
     assert paired[2].equity == "95000.00"
-    assert result.ftmo_evaluation["terminal_status"] == "breached"
     assert result.ftmo_evaluation["breach"] == {
         "reason": "maximum_daily_loss",
         "equity": "94999.00",
         "floor": "95000.00",
         "timestamp_ns": paired[3].timestamp_ns,
     }
-    assert paired[3].timestamp_ns == paired[2].timestamp_ns + 60_000_000_000
+
+
+def test_short_liquidation_equity_equal_floor_then_next_ask_breaches(
+    tmp_path: Path,
+) -> None:
+    prices = (
+        Decimal("1.10000"),
+        Decimal("1.10000"),
+        Decimal("1.14980"),
+        Decimal("1.14981"),
+        Decimal("1.14981"),
+    )
+    root = _catalog_root(
+        tmp_path / "data",
+        _flat_minutes(len(prices)),
+        base_prices=prices,
+        bar_range=Decimal(0),
+    )
+    plan = ProbePlan(
+        order_kind=ProbeOrderKind.MARKET,
+        side=ProbeSide.SELL,
+        quantity=Decimal("100000"),
+        entry_bar_index=0,
+    )
+
+    result = _run(root, tmp_path / "run", plan=plan)
+
+    paired = _paired_observations(result)
+    assert paired[2].ask_close == "1.15000"
+    assert paired[2].equity == "95000.00"
+    assert result.ftmo_evaluation["breach"] == {
+        "reason": "maximum_daily_loss",
+        "equity": "94999.00",
+        "floor": "95000.00",
+        "timestamp_ns": paired[3].timestamp_ns,
+    }
 
 
 def test_native_fee_can_trigger_breach_in_fill_callback(tmp_path: Path) -> None:
@@ -162,6 +227,62 @@ def test_overlay_native_state_reconciles_with_reports_and_result(
 
     manifest = json.loads(result.manifest_path.read_text(encoding="utf-8"))
     assert manifest["ftmo_evaluation"] == result.ftmo_evaluation
+    assert result.ftmo_evaluation["observation_mechanism_version"] == "g0.9-2"
+    assert (
+        result.ftmo_evaluation["valuation_mechanism_version"]
+        == "g0.9-liquidation-close-1"
+    )
+    assert result.ftmo_evaluation["valuation_resolution"] == (
+        "1-minute paired-bar close"
+    )
+    assert not result.ftmo_evaluation["continuous_intraminute_compliance_exact"]
+    assert final_snapshot["completed_mark_timestamp_ns"] is not None
+    assert final_snapshot["bid_close"] == "1.10000"
+    assert final_snapshot["ask_close"] == "1.10020"
+    assert "native_portfolio_equity" in final_snapshot
+    assert "native_minus_ftmo_equity" in final_snapshot
+
+
+def test_liquidation_valuation_matches_native_realized_close_for_long_and_short(
+    tmp_path: Path,
+) -> None:
+    for side, mark_base in (
+        (ProbeSide.BUY, Decimal("1.07500")),
+        (ProbeSide.SELL, Decimal("1.12480")),
+    ):
+        prices = (
+            Decimal("1.10000"),
+            mark_base,
+            mark_base,
+            mark_base,
+        )
+        root = _catalog_root(
+            tmp_path / side.value / "data",
+            _flat_minutes(len(prices)),
+            base_prices=prices,
+            bar_range=Decimal(0),
+        )
+        hold_plan = ProbePlan(
+            order_kind=ProbeOrderKind.MARKET,
+            side=side,
+            quantity=Decimal("100000"),
+            entry_bar_index=0,
+        )
+        close_plan = ProbePlan(
+            order_kind=ProbeOrderKind.MARKET,
+            side=side,
+            quantity=Decimal("100000"),
+            entry_bar_index=0,
+            exit_bar_index=2,
+        )
+
+        held = _run(root, tmp_path / side.value / "held", plan=hold_plan)
+        closed = _run(root, tmp_path / side.value / "closed", plan=close_plan)
+
+        held_equity = Decimal(held.result_summary["ending_equity"])
+        closed_balance = Decimal(closed.result_summary["ending_balance"])
+        assert closed_balance == held_equity
+        assert closed.result_summary["open_position_ids"] == []
 
 
 def test_identical_runs_reproduce_ftmo_state_and_breach_evidence(

@@ -66,12 +66,14 @@ from ftmoquant.prop_rules import EvaluationPhase, PropRuleSet, load_prop_rule_se
 from ftmoquant.risk import (
     FTMO_OBSERVATION_DELAY_NS,
     FTMO_OBSERVATION_VERSION,
+    FTMO_VALUATION_VERSION,
     FtmoObservation,
     FtmoRuntimeConfig,
     NativeAccountSnapshot,
     NautilusAccountSnapshotSource,
     NautilusFtmoBridge,
     NautilusFtmoOverlay,
+    PairedBarLiquidationSnapshotSource,
 )
 
 EXECUTION_CONFIG_VERSION = 1
@@ -284,11 +286,17 @@ class _ExecutionProbe(Strategy):
     def on_start(self) -> None:
         if self._ftmo_runtime is None or self._ftmo_rules is None:
             raise RuntimeError("execution probe FTMO configuration is missing")
-        source = NautilusAccountSnapshotSource(
+        native_source = NautilusAccountSnapshotSource(
             cache=self.cache,
             portfolio=self.portfolio,
             venue=_VENUE,
             currency=Currency.from_str(self._ftmo_runtime.currency),
+        )
+        source = PairedBarLiquidationSnapshotSource(
+            cache=self.cache,
+            native_source=native_source,
+            instrument_id=_INSTRUMENT,
+            account_currency=Currency.from_str(self._ftmo_runtime.currency),
         )
         overlay = NautilusFtmoOverlay(
             runtime=self._ftmo_runtime,
@@ -1069,6 +1077,7 @@ def _ftmo_evaluation_dict(
 ) -> dict[str, Any]:
     state = bridge.overlay.state
     breach = state.breach
+    valuation = bridge.valuation()
     observations = [_jsonable(asdict(item)) for item in bridge.observations]
     return {
         "observation_mechanism": (
@@ -1076,6 +1085,13 @@ def _ftmo_evaluation_dict(
             "post-settlement native-clock alert"
         ),
         "observation_mechanism_version": FTMO_OBSERVATION_VERSION,
+        "valuation_mechanism": (
+            "native account balance plus native Position.unrealized_pnl at "
+            "completed-pair liquidation-side close"
+        ),
+        "valuation_mechanism_version": FTMO_VALUATION_VERSION,
+        "valuation_resolution": "1-minute paired-bar close",
+        "continuous_intraminute_compliance_exact": False,
         "post_settlement_delay_ns": FTMO_OBSERVATION_DELAY_NS,
         "active_phase": phase.value,
         "current_ftmo_trading_day": state.current_trading_day.isoformat(),
@@ -1097,7 +1113,20 @@ def _ftmo_evaluation_dict(
         "final_native_snapshot": {
             "balance": str(snapshot.balance),
             "equity": str(snapshot.equity),
+            "native_portfolio_equity": str(valuation.native_portfolio_equity),
+            "native_minus_ftmo_equity": str(
+                valuation.native_portfolio_equity - snapshot.equity
+            ),
             "open_position_ids": sorted(snapshot.open_position_ids),
+            "completed_mark_timestamp_ns": (
+                valuation.completed_mark_timestamp_ns
+            ),
+            "bid_close": (
+                None if valuation.bid_close is None else str(valuation.bid_close)
+            ),
+            "ask_close": (
+                None if valuation.ask_close is None else str(valuation.ask_close)
+            ),
         },
         "observation_count": len(observations),
         "observations_sha256": _sha256_json(observations),
@@ -1186,6 +1215,7 @@ def _run_config_dict(
         "source": "paired external 1-minute BID/ASK bars",
         "spread_adjustment": "none",
         "ftmo_observation_version": FTMO_OBSERVATION_VERSION,
+        "ftmo_valuation_version": FTMO_VALUATION_VERSION,
         "ftmo_post_settlement_delay_ns": FTMO_OBSERVATION_DELAY_NS,
     }
 

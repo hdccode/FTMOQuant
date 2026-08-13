@@ -300,8 +300,8 @@ G0.9 composes the existing `NautilusFtmoOverlay` and
 `NautilusAccountSnapshotSource` with the G0.7 strategy through a small
 `NautilusFtmoBridge`. The bridge contains no floor, pass, matching, P/L, fee,
 or rollover calculation. It forwards native `OrderFilled` and
-`PositionOpened` callbacks to the overlay and reads balance, portfolio equity,
-and open positions only through the existing snapshot source. The runtime
+`PositionOpened` callbacks to the overlay and reads balance and open positions
+from Nautilus through the existing snapshot boundary. The runtime
 `EvaluationPhase` is mandatory in every execution request; there is no default
 Challenge phase.
 
@@ -310,7 +310,7 @@ seen both BID and ASK with the same `ts_init`. It then schedules a native clock
 alert exactly one nanosecond later. The runner extends only the observation
 horizon by that one nanosecond so the final pair is also observed; source data,
 requested range, matching, and scripted orders are unchanged. This mechanism
-is versioned as `g0.9-1` in the execution manifest. Every observation reads
+is versioned as `g0.9-2` in the execution manifest. Every observation reads
 native state and the final manifest records phase, FTMO day, reset balance,
 both loss floors, counted days, latched terminal status and breach evidence,
 plus a deterministic observation hash.
@@ -341,6 +341,8 @@ remains authoritative:
   for native command, execution-event, cache, portfolio, and strategy flow.
 - [`crates/portfolio/src/portfolio.rs`](https://github.com/nautechsystems/nautilus_trader/blob/7f0e93dfa3f09ca165a5f3292a45fafbb5681561/crates/portfolio/src/portfolio.rs)
   for external-bar subscription priority and `update_bar` behavior.
+- [`crates/model/src/position.rs`](https://github.com/nautechsystems/nautilus_trader/blob/7f0e93dfa3f09ca165a5f3292a45fafbb5681561/crates/model/src/position.rs)
+  for native `Position.unrealized_pnl(Price)` liquidation-mark valuation.
 - [`crates/backtest/src/engine.rs`](https://github.com/nautechsystems/nautilus_trader/blob/7f0e93dfa3f09ca165a5f3292a45fafbb5681561/crates/backtest/src/engine.rs)
   for timer draining, timestamp finalization, venue settlement, and module
   ordering.
@@ -349,13 +351,36 @@ remains authoritative:
   [`crates/backtest/tests/exchange.rs`](https://github.com/nautechsystems/nautilus_trader/blob/7f0e93dfa3f09ca165a5f3292a45fafbb5681561/crates/backtest/tests/exchange.rs)
   for native account-adjustment settlement.
 
-An rc2 limitation remains visible rather than patched: Portfolio's external
-bar cache is keyed by instrument rather than BID/ASK side. With the observed
-BID-then-ASK dispatch order, completed-pair portfolio equity reflects the final
-ASK close for both long and short positions. G0.9 records and evaluates that
-native rc2 portfolio value because synthesizing quotes or maintaining a second
-P/L ledger is explicitly out of scope. Execution matching itself continues to
-use Nautilus's native paired BID/ASK path.
+Nautilus rc2 Portfolio has an important external-bar limitation: its fallback
+bar close is keyed by instrument rather than BID/ASK side. With deterministic
+BID-then-ASK dispatch, native Portfolio equity therefore marks both long and
+short positions at the final ASK close. This is not liquidation-side correct
+for a long position and can change an FTMO floor decision.
+
+G0.9 corrects only the observational snapshot boundary. After a complete pair,
+`PairedBarLiquidationSnapshotSource` marks LONG positions at BID close and
+SHORT positions at ASK close. It delegates each ephemeral open-position value
+to the installed rc2 native `Position.unrealized_pnl(Price)` method, sums those
+native `Money` results onto native account balance, and persists no P/L state.
+Fees, realized P/L, and rollover remain native account-balance effects. The
+native Portfolio fallback equity is retained separately as a diagnostic, with
+the completed mark timestamp, BID/ASK closes, authoritative FTMO equity, and
+their difference. Unsupported non-EUR/USD or non-USD settlement/account cases
+are rejected rather than silently converted.
+
+The installed rc2 primitive was verified with a targeted long/short probe. A
+100,000 EUR long opened at ASK 1.10020 and marked at BID 1.05000 produced native
+`Position.unrealized_pnl` of `-5020.00 USD`, while Portfolio's ASK fallback
+reported equity 95000.00; authoritative liquidation equity was 94980.00. A
+short position was correspondingly marked at ASK. Closing immediately at the
+same liquidation-side price reconciles the ephemeral native unrealized value
+with native realized account balance when exit fees are zero.
+
+This correction does not make one-minute bars equivalent to continuous price
+monitoring. Provenance explicitly records `valuation_resolution` as
+`1-minute paired-bar close` and
+`continuous_intraminute_compliance_exact=false`. Intraminute FTMO breaches can
+therefore remain unobserved; tick-level compliance is outside this G0 fix.
 
 ## Known evaluation limits
 
