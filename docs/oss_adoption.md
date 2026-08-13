@@ -23,6 +23,7 @@ fixture result is asserted across two independent engine instances.
 | NautilusTrader | [nautechsystems/nautilus_trader](https://github.com/nautechsystems/nautilus_trader) | LGPL-3.0-or-later | Event-driven backtest/live trading core | Adopt provisionally at exactly PyPI `2.0.0rc2`; the locked macOS ARM64 wheel is SHA-256 `a271f0cfd82a75ade4da19b6ead495acb01c1b19de6b1a82da414950887cdd52` |
 | tradedesk-dukascopy | [radiusred/tradedesk-dukascopy](https://github.com/radiusred/tradedesk-dukascopy) | Apache-2.0 | Dukascopy BI5 acquisition, recovery, decoding, scale probe, and 1-minute export | Adopt at exactly `1.0.0` / commit `b8fb503c9291d6e265949d008e288b76b68fb852`; FTMOQuant calls its public export CLI contract and retains its CSV metadata sidecars |
 | LEAN | [QuantConnect/Lean](https://github.com/QuantConnect/Lean) | Apache-2.0 | Full event-driven trading engine alternative | Not adopted; .NET-centric runtime adds operational weight to this Python project |
+| hftbacktest | [nkaz001/hftbacktest](https://github.com/nkaz001/hftbacktest) | Apache-2.0 | Latency-oriented backtest architecture reference | Reference-only for G0.7; no dependency, code, matching engine, or accounting implementation was adopted |
 | vectorbt | [polakowo/vectorbt](https://github.com/polakowo/vectorbt) | Apache-2.0 + Commons Clause | Vectorized research and parameter exploration | Deferred; useful research complement, not the execution/accounting core |
 | Backtrader | [mementum/backtrader](https://github.com/mementum/backtrader) | GPL-3.0 | Python event-driven backtester | Not adopted; license and legacy architecture are a poor core fit |
 | Zipline Reloaded | [stefan-jansen/zipline-reloaded](https://github.com/stefan-jansen/zipline-reloaded) | Apache-2.0 | Research backtesting | Not adopted; backtest-oriented rather than research-to-live execution parity |
@@ -189,14 +190,80 @@ window makes coverage `incomplete`; any otherwise gap-free no-update window is
 identify a legitimate market closure. Only datasets with no dropped windows
 and at least one bar in all four required series are marked research-ready.
 
+## G0.7 native execution-harness adoption
+
+G0.7 keeps the validated G0.5 one-minute external BID and ASK bars as the only
+execution market. Nautilus `BacktestEngine` runs with `BookType.L1_MBP`,
+`bar_execution=True`, and `trade_execution=False`. Its matching engine waits
+for equal-`ts_init` BID/ASK bars and internally constructs the paired quote
+updates used by L1 bar execution. FTMOQuant validates that pairing before the
+run, but does not synthesize quote ticks, alter OHLC, or add a second spread.
+G0.6 1H/4H bars never drive matching.
+
+The typed execution profile supplies every execution assumption explicitly.
+`ProbabilisticFillModel` provides limit-fill probability, adverse one-tick
+slippage, and its deterministic seed. `StaticLatencyModel` provides base plus
+insert/update/cancel nanosecond latency. Fees use native `FixedFeeModel`,
+`PerContractFeeModel`, or `MakerTakerFeeModel`; maker/taker rates are applied to
+an in-memory instrument clone, never the catalog instrument. The venue is a
+native MARGIN account with runtime capital, base currency, and leverage, and
+the runner persists normalized exports of Nautilus's account, orders,
+order-fills, fills, and positions reports.
+
+`FXRolloverInterestModule` is reused directly with explicit
+`InterestRateRecord` inputs. Enabling it requires the profile to be labelled at
+least `proxy`; it is not broker/FTMO swap calibration. A
+`broker_calibrated` profile additionally requires the SHA-256 of external
+broker evidence. No commission, latency, leverage, swap rate, or other FTMO
+execution value is supplied by G0.7.
+
+Research readiness and execution calibration are independent. Research mode
+requires a G0.6 manifest bound to the current G0.5 manifest, with
+`derived_bar_integrity_valid=true` and `research_ready=true`. Test/probe mode
+may use documented synthetic inputs. The execution probe is a predetermined
+market/limit entry and optional exit or overnight hold; it contains no
+indicator, signal, or trading hypothesis.
+
+The installed `2.0.0rc2` generated stubs were checked before implementation:
+`nautilus_trader/backtest/__init__.pyi` for `BacktestEngine`,
+`BacktestRunConfig`, `BacktestVenueConfig`, `BacktestDataConfig`, report APIs,
+`FXRolloverInterestModule`, and `InterestRateRecord`; and
+`nautilus_trader/execution/__init__.pyi` for the fill, fee, and latency model
+constructors. The following upstream files at reviewed commit
+`7f0e93dfa3f09ca165a5f3292a45fafbb5681561` supplied behavioral corroboration:
+
+- [`docs/concepts/backtesting/bar-execution.md`](https://github.com/nautechsystems/nautilus_trader/blob/7f0e93dfa3f09ca165a5f3292a45fafbb5681561/docs/concepts/backtesting/bar-execution.md)
+  for native BID/ASK bar pairing and deterministic/adaptive OHLC traversal.
+- [`docs/concepts/backtesting/fill-models.md`](https://github.com/nautechsystems/nautilus_trader/blob/7f0e93dfa3f09ca165a5f3292a45fafbb5681561/docs/concepts/backtesting/fill-models.md)
+  and
+  [`crates/execution/src/models/fill.rs`](https://github.com/nautechsystems/nautilus_trader/blob/7f0e93dfa3f09ca165a5f3292a45fafbb5681561/crates/execution/src/models/fill.rs)
+  for probability boundaries, one-tick adverse slippage, and seeded RNG.
+- [`crates/execution/src/matching_engine/mod.rs`](https://github.com/nautechsystems/nautilus_trader/blob/7f0e93dfa3f09ca165a5f3292a45fafbb5681561/crates/execution/src/matching_engine/mod.rs)
+  for exact paired-bar timestamp behavior and L1 matching.
+- [`crates/execution/src/models/latency.rs`](https://github.com/nautechsystems/nautilus_trader/blob/7f0e93dfa3f09ca165a5f3292a45fafbb5681561/crates/execution/src/models/latency.rs)
+  and
+  [`crates/execution/src/models/fee.rs`](https://github.com/nautechsystems/nautilus_trader/blob/7f0e93dfa3f09ca165a5f3292a45fafbb5681561/crates/execution/src/models/fee.rs)
+  for the adopted native models.
+- [`crates/backtest/src/modules/fx_rollover.rs`](https://github.com/nautechsystems/nautilus_trader/blob/7f0e93dfa3f09ca165a5f3292a45fafbb5681561/crates/backtest/src/modules/fx_rollover.rs)
+  and the rollover, BID/ASK bar, fee, and latency cases in
+  [`crates/backtest/tests/exchange.rs`](https://github.com/nautechsystems/nautilus_trader/blob/7f0e93dfa3f09ca165a5f3292a45fafbb5681561/crates/backtest/tests/exchange.rs).
+
+hftbacktest's latency architecture and QuantConnect LEAN were reference-only;
+neither was added as a dependency or used to create another matcher or ledger.
+
+Nautilus rc2 has one report-level reproducibility limitation: native event and
+order-initialization UUIDs remain random even with `use_random_ids=False`.
+G0.7 retains deterministic native venue-order, trade, and position IDs and
+removes only those transport UUID columns/keys from the immutable semantic CSV
+exports and hashes. Economic fill, position, and account content is unchanged.
+
 ## Known evaluation limits
 
 - The integration surface currently expects its owner to forward native
   position-open and fill events and to refresh on market/account observations;
   it is not a standalone Nautilus actor.
-- Swap/rollover data is exposed by Nautilus modules but is not exercised by the
-  intraday probe.
-- The probe validates one deterministic L1 margin-account round trip, not broker
-  adapter fidelity, latency, slippage, partial fills, or live reconciliation.
+- G0.7 exercises synthetic rollover, latency, slippage, limit probability, and
+  fee fixtures, but none is evidence of broker adapter fidelity, partial-fill
+  calibration, or live reconciliation.
 - Report generation requires pandas; it is installed directly instead of the
   broader Nautilus `visualization` extra.
