@@ -298,6 +298,37 @@ than falling through to another native procedure or method. Native optimal
 block-length estimates must be finite and positive or the adapter rejects
 them without substitution, and MCS requires at least two loss-model columns.
 
+## G1.1 strategy-specification audit
+
+The bounded G1.1 audit reviewed only NautilusTrader because a second repository
+or dependency did not materially improve a static hypothesis contract or CSV
+registry. The installed, pinned `nautilus-trader==2.0.0rc2` wheel was checked
+for `StrategyConfig`, `ImportableStrategyConfig`, `register_indicator_for_bars`,
+`AverageTrueRange`, moving-average types, `BarType`, and indicator initialized
+state. These are the intended G1.2 implementation facilities; no strategy code
+is present in G1.1.
+
+For current upstream corroboration, the audit reviewed
+[`nautechsystems/nautilus_trader`](https://github.com/nautechsystems/nautilus_trader)
+at commit
+[`1158ab32b88e6c78a03a80d6e8fb6930f1433e7d`](https://github.com/nautechsystems/nautilus_trader/commit/1158ab32b88e6c78a03a80d6e8fb6930f1433e7d),
+under LGPL-3.0-or-later:
+
+- `docs/concepts/strategies.md` for the shared backtest/live strategy source,
+  explicit `StrategyConfig`, lifecycle handlers, and bar callbacks;
+- `examples/backtest/example_07_using_indicators/strategy.py` for native
+  moving-average creation, bar registration, and fail-closed indicator warm-up;
+  and
+- `python/tests/strategies/ema_cross.py` for typed configuration and explicit
+  completed-bar crossover state.
+
+No upstream source or test text was copied, no dependency was added, and the
+upstream moving-average crossover is not the FTMOQuant hypothesis. G1.1 adapts
+only the architectural decision to keep configuration explicit and to rely on
+native bar/indicator lifecycle in G1.2. Because the reviewed current upstream
+commit is newer than the pinned rc2 artifact, installed rc2 stubs remain the
+runtime authority.
+
 `empyrical-reloaded` and QuantStats remain deferred/reference-only and are not
 dependencies in G0.8. Neither is needed for the adopted resampling and
 multiple-comparison scope.
