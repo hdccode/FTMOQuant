@@ -19,7 +19,6 @@ from pathlib import Path
 from typing import Any, cast
 
 import pandas as pd  # type: ignore[import-untyped]
-import yaml
 from nautilus_trader.backtest import (
     BacktestDataConfig,
     BacktestEngine,
@@ -49,8 +48,10 @@ from nautilus_trader.model import (
     MarginAccount,
     Money,
     OmsType,
+    OrderFilled,
     OrderSide,
     OtoTriggerMode,
+    PositionOpened,
     Price,
     Quantity,
     StrategyId,
@@ -61,6 +62,17 @@ from nautilus_trader.trading import Strategy, StrategyConfig
 
 from ftmoquant.data.derived_bars import DERIVED_MANIFEST_FILENAME
 from ftmoquant.data.dukascopy import INSTRUMENT_ID, NAUTILUS_VERSION
+from ftmoquant.prop_rules import EvaluationPhase, PropRuleSet, load_prop_rule_set
+from ftmoquant.risk import (
+    FTMO_OBSERVATION_DELAY_NS,
+    FTMO_OBSERVATION_VERSION,
+    FtmoObservation,
+    FtmoRuntimeConfig,
+    NativeAccountSnapshot,
+    NautilusAccountSnapshotSource,
+    NautilusFtmoBridge,
+    NautilusFtmoOverlay,
+)
 
 EXECUTION_CONFIG_VERSION = 1
 EXECUTION_PROFILE_VERSION = "g0.7-1"
@@ -212,6 +224,7 @@ class ExecutionRunRequest:
     probe: ProbePlan
     requested_start_ns: int
     requested_end_ns: int
+    ftmo_phase: EvaluationPhase
     mode: RunMode = RunMode.TEST
 
 
@@ -224,6 +237,8 @@ class ExecutionRunResult:
     run_config_id: str
     profile_sha256: str
     result_summary: Mapping[str, Any]
+    ftmo_evaluation: Mapping[str, Any]
+    ftmo_observations: tuple[FtmoObservation, ...]
 
 
 class _ExecutionProbe(Strategy):
@@ -240,20 +255,59 @@ class _ExecutionProbe(Strategy):
         self._plan: ProbePlan | None = None
         self._instrument: CurrencyPair | None = None
         self._ask_bar_index = -1
+        self._ftmo_runtime: FtmoRuntimeConfig | None = None
+        self._ftmo_rules: PropRuleSet | None = None
+        self._ftmo_bridge: NautilusFtmoBridge | None = None
 
-    def configure(self, plan: ProbePlan, instrument: CurrencyPair) -> None:
+    def configure(
+        self,
+        plan: ProbePlan,
+        instrument: CurrencyPair,
+        ftmo_runtime: FtmoRuntimeConfig,
+        ftmo_rules: PropRuleSet,
+    ) -> None:
         """Supply the already-validated immutable probe configuration."""
 
         self._plan = plan
         self._instrument = instrument
+        self._ftmo_runtime = ftmo_runtime
+        self._ftmo_rules = ftmo_rules
+
+    @property
+    def ftmo_bridge(self) -> NautilusFtmoBridge:
+        """Return the initialized reusable FTMO bridge."""
+
+        if self._ftmo_bridge is None:
+            raise RuntimeError("FTMO bridge is not initialized")
+        return self._ftmo_bridge
 
     def on_start(self) -> None:
+        if self._ftmo_runtime is None or self._ftmo_rules is None:
+            raise RuntimeError("execution probe FTMO configuration is missing")
+        source = NautilusAccountSnapshotSource(
+            cache=self.cache,
+            portfolio=self.portfolio,
+            venue=_VENUE,
+            currency=Currency.from_str(self._ftmo_runtime.currency),
+        )
+        overlay = NautilusFtmoOverlay(
+            runtime=self._ftmo_runtime,
+            rules=self._ftmo_rules,
+            clock=self.clock,
+            account_source=source,
+        )
+        self._ftmo_bridge = NautilusFtmoBridge(
+            clock=self.clock,
+            overlay=overlay,
+            account_source=source,
+        )
         self.subscribe_bars(BarType.from_str(_SOURCE_BAR_TYPES[0]))
         self.subscribe_bars(BarType.from_str(_SOURCE_BAR_TYPES[1]))
 
     def on_bar(self, bar: Bar) -> None:
         if self._plan is None:
             raise RuntimeError("execution probe is not configured")
+        self.ftmo_bridge.on_bar(bar)
         if str(bar.bar_type) != _SOURCE_BAR_TYPES[1]:
             return
         self._ask_bar_index += 1
@@ -261,6 +315,12 @@ class _ExecutionProbe(Strategy):
             self._submit_entry()
         if self._ask_bar_index == self._plan.exit_bar_index:
             self.close_all_positions(_INSTRUMENT)
+
+    def on_order_filled(self, event: OrderFilled) -> None:
+        self.ftmo_bridge.on_order_filled(event)
+
+    def on_position_opened(self, event: PositionOpened) -> None:
+        self.ftmo_bridge.on_position_opened(event)
 
     def _submit_entry(self) -> None:
         if self._plan is None or self._instrument is None:
@@ -330,7 +390,8 @@ def run_eurusd_execution(request: ExecutionRunRequest) -> ExecutionRunResult:
     g0_6_sha256 = _validate_research_gate(
         request.mode, g0_6_path, g0_5_sha256
     )
-    prop_rule_version = _prop_rule_version(request.prop_rule_config_path)
+    ftmo_rules = load_prop_rule_set(request.prop_rule_config_path)
+    prop_rule_version = ftmo_rules.version
     git_commit = _git_commit()
 
     catalog = ParquetDataCatalog(str(catalog_path))
@@ -396,7 +457,7 @@ def run_eurusd_execution(request: ExecutionRunRequest) -> ExecutionRunResult:
         raise_exception=True,
         dispose_on_completion=False,
         start=request.requested_start_ns,
-        end=request.requested_end_ns,
+        end=request.requested_end_ns + FTMO_OBSERVATION_DELAY_NS,
     )
     if run_config.id != run_config_id:
         raise RuntimeError("Nautilus changed the deterministic run-config ID")
@@ -415,15 +476,37 @@ def run_eurusd_execution(request: ExecutionRunRequest) -> ExecutionRunResult:
         engine.add_instrument(effective_instrument)
         engine.add_data((*selected_bid, *selected_ask), validate=True, sort=True)
         probe = _ExecutionProbe()
-        probe.configure(request.probe, effective_instrument)
+        probe.configure(
+            request.probe,
+            effective_instrument,
+            FtmoRuntimeConfig(
+                initial_capital=request.account.initial_capital,
+                currency=request.account.currency,
+                active_phase=request.ftmo_phase,
+            ),
+            ftmo_rules,
+        )
         engine.add_strategy(probe)
         engine.run(
             start=request.requested_start_ns,
-            end=request.requested_end_ns,
+            end=request.requested_end_ns + FTMO_OBSERVATION_DELAY_NS,
             run_config_id=run_config_id,
         )
+        ftmo_bridge = probe.ftmo_bridge
+        native_snapshot = ftmo_bridge.snapshot()
         reports = _native_reports(engine)
-        result_summary = _result_summary(engine, reports, request.account)
+        result_summary = _result_summary(
+            engine,
+            reports,
+            request.account,
+            native_snapshot,
+        )
+        ftmo_observations = ftmo_bridge.observations
+        ftmo_evaluation = _ftmo_evaluation_dict(
+            request.ftmo_phase,
+            ftmo_bridge,
+            native_snapshot,
+        )
     finally:
         engine.dispose()
 
@@ -441,6 +524,7 @@ def run_eurusd_execution(request: ExecutionRunRequest) -> ExecutionRunResult:
         "git_commit": git_commit,
         "nautilus_version": NAUTILUS_VERSION,
         "ftmo_rule_config_version": prop_rule_version,
+        "ftmo_evaluation": ftmo_evaluation,
         "g0_5_manifest": G0_5_MANIFEST_FILENAME,
         "g0_5_manifest_sha256": g0_5_sha256,
         "g0_6_manifest": (
@@ -480,6 +564,8 @@ def run_eurusd_execution(request: ExecutionRunRequest) -> ExecutionRunResult:
         run_config_id=run_config_id,
         profile_sha256=profile_sha256,
         result_summary=result_summary,
+        ftmo_evaluation=ftmo_evaluation,
+        ftmo_observations=ftmo_observations,
     )
 
 
@@ -509,6 +595,8 @@ def _validate_runtime(request: ExecutionRunRequest) -> None:
         raise ExecutionValidationError("missing FTMO rule config")
     if request.requested_start_ns >= request.requested_end_ns:
         raise ExecutionValidationError("requested start must be before end")
+    if not isinstance(request.ftmo_phase, EvaluationPhase):
+        raise ExecutionValidationError("ftmo_phase must be explicit")
     _validate_account(request.account)
     _validate_profile(request.profile)
 
@@ -948,6 +1036,7 @@ def _result_summary(
     engine: BacktestEngine,
     reports: Mapping[str, pd.DataFrame],
     account_parameters: AccountParameters,
+    native_snapshot: NativeAccountSnapshot,
 ) -> dict[str, Any]:
     account = cast(MarginAccount | None, engine.cache.account_for_venue(_VENUE))
     if account is None:
@@ -961,13 +1050,57 @@ def _result_summary(
     positions = _stable_report_frame(reports["positions"])
     return {
         "ending_balance": str(balance.as_decimal()),
+        "ending_equity": str(native_snapshot.equity),
         "ending_currency": account_parameters.currency,
+        "open_position_ids": sorted(native_snapshot.open_position_ids),
         "order_count": len(reports["orders"]),
         "fill_count": len(fills),
         "position_count": len(positions),
         "fills": fill_rows,
         "positions_sha256": _sha256_json(_stable_records(positions)),
         "account_sha256": _sha256_json(_stable_records(reports["account"])),
+    }
+
+
+def _ftmo_evaluation_dict(
+    phase: EvaluationPhase,
+    bridge: NautilusFtmoBridge,
+    snapshot: NativeAccountSnapshot,
+) -> dict[str, Any]:
+    state = bridge.overlay.state
+    breach = state.breach
+    observations = [_jsonable(asdict(item)) for item in bridge.observations]
+    return {
+        "observation_mechanism": (
+            "native fill/position callbacks plus complete BID/ASK pair "
+            "post-settlement native-clock alert"
+        ),
+        "observation_mechanism_version": FTMO_OBSERVATION_VERSION,
+        "post_settlement_delay_ns": FTMO_OBSERVATION_DELAY_NS,
+        "active_phase": phase.value,
+        "current_ftmo_trading_day": state.current_trading_day.isoformat(),
+        "midnight_reset_balance": str(state.midnight_reset_balance),
+        "daily_loss_floor": str(state.daily_loss_floor),
+        "maximum_loss_floor": str(state.maximum_loss_floor),
+        "counted_trading_days": sorted(day.isoformat() for day in state.trading_days),
+        "terminal_status": state.status.value,
+        "breach": (
+            None
+            if breach is None
+            else {
+                "reason": breach.reason.value,
+                "equity": str(breach.equity),
+                "floor": str(breach.floor),
+                "timestamp_ns": breach.timestamp_ns,
+            }
+        ),
+        "final_native_snapshot": {
+            "balance": str(snapshot.balance),
+            "equity": str(snapshot.equity),
+            "open_position_ids": sorted(snapshot.open_position_ids),
+        },
+        "observation_count": len(observations),
+        "observations_sha256": _sha256_json(observations),
     }
 
 
@@ -1019,6 +1152,7 @@ def _run_identity(
         "account": _account_dict(request.account),
         "probe": _jsonable(asdict(request.probe)),
         "mode": request.mode.value,
+        "ftmo_phase": request.ftmo_phase.value,
         "start": request.requested_start_ns,
         "end": request.requested_end_ns,
         "bid": [_bar_content(bar) for bar in bid],
@@ -1051,6 +1185,8 @@ def _run_config_dict(
         "frozen_account": False,
         "source": "paired external 1-minute BID/ASK bars",
         "spread_adjustment": "none",
+        "ftmo_observation_version": FTMO_OBSERVATION_VERSION,
+        "ftmo_post_settlement_delay_ns": FTMO_OBSERVATION_DELAY_NS,
     }
 
 
@@ -1111,16 +1247,6 @@ def _load_json_object(path: Path, label: str) -> dict[str, Any]:
     if not isinstance(value, dict):
         raise ExecutionValidationError(f"{label} must be an object")
     return cast(dict[str, Any], value)
-
-
-def _prop_rule_version(path: Path) -> str:
-    try:
-        value = yaml.safe_load(path.read_text(encoding="utf-8"))
-    except (OSError, yaml.YAMLError) as error:
-        raise ExecutionValidationError(f"invalid FTMO rule config: {error}") from error
-    if not isinstance(value, dict) or not isinstance(value.get("version"), str):
-        raise ExecutionValidationError("FTMO rule config has no string version")
-    return cast(str, value["version"])
 
 
 def _git_commit() -> str:

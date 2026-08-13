@@ -294,6 +294,69 @@ metrics remain Nautilus analysis responsibilities.
 dependencies in G0.8. Neither is needed for the adopted resampling and
 multiple-comparison scope.
 
+## G0.9 end-to-end FTMO observation
+
+G0.9 composes the existing `NautilusFtmoOverlay` and
+`NautilusAccountSnapshotSource` with the G0.7 strategy through a small
+`NautilusFtmoBridge`. The bridge contains no floor, pass, matching, P/L, fee,
+or rollover calculation. It forwards native `OrderFilled` and
+`PositionOpened` callbacks to the overlay and reads balance, portfolio equity,
+and open positions only through the existing snapshot source. The runtime
+`EvaluationPhase` is mandatory in every execution request; there is no default
+Challenge phase.
+
+For external one-minute bars, the bridge waits until strategy callbacks have
+seen both BID and ASK with the same `ts_init`. It then schedules a native clock
+alert exactly one nanosecond later. The runner extends only the observation
+horizon by that one nanosecond so the final pair is also observed; source data,
+requested range, matching, and scripted orders are unchanged. This mechanism
+is versioned as `g0.9-1` in the execution manifest. Every observation reads
+native state and the final manifest records phase, FTMO day, reset balance,
+both loss floors, counted days, latched terminal status and breach evidence,
+plus a deterministic observation hash.
+
+The installed NautilusTrader `2.0.0rc2` stubs and wheel behavior were checked
+before implementation. A minimal targeted engine probe with paired bars, a
+fixed fee, an open FX position, an FX rollover boundary, and native clock
+alerts established the following ordering:
+
+- Portfolio subscribes to `data.bars.*EXTERNAL` before strategy callbacks, so
+  each external bar has refreshed native portfolio state by `on_bar`.
+- `OrderFilled` and `PositionOpened` strategy callbacks see the native cache,
+  account commission, portfolio, and position updates already applied.
+- Same-timestamp native timer callbacks are drained before venue modules.
+- `FXRolloverInterestModule` applies its account adjustment during venue-module
+  timestamp finalization. A completed-pair alert at `ts_init + 1 ns` therefore
+  sees the adjusted account on the immediately following deterministic native
+  clock cycle, without a later trade.
+- The overlay's existing Prague reset alert captures the native account
+  balance at midnight and reschedules itself; holding a position does not emit
+  another `PositionOpened` or count another trading day.
+
+Behavioral source references were reviewed at upstream commit
+`7f0e93dfa3f09ca165a5f3292a45fafbb5681561`, while the installed rc2 wheel
+remains authoritative:
+
+- [`docs/concepts/backtesting/execution-flow.md`](https://github.com/nautechsystems/nautilus_trader/blob/7f0e93dfa3f09ca165a5f3292a45fafbb5681561/docs/concepts/backtesting/execution-flow.md)
+  for native command, execution-event, cache, portfolio, and strategy flow.
+- [`crates/portfolio/src/portfolio.rs`](https://github.com/nautechsystems/nautilus_trader/blob/7f0e93dfa3f09ca165a5f3292a45fafbb5681561/crates/portfolio/src/portfolio.rs)
+  for external-bar subscription priority and `update_bar` behavior.
+- [`crates/backtest/src/engine.rs`](https://github.com/nautechsystems/nautilus_trader/blob/7f0e93dfa3f09ca165a5f3292a45fafbb5681561/crates/backtest/src/engine.rs)
+  for timer draining, timestamp finalization, venue settlement, and module
+  ordering.
+- [`crates/backtest/src/modules/fx_rollover.rs`](https://github.com/nautechsystems/nautilus_trader/blob/7f0e93dfa3f09ca165a5f3292a45fafbb5681561/crates/backtest/src/modules/fx_rollover.rs)
+  and the rollover cases in
+  [`crates/backtest/tests/exchange.rs`](https://github.com/nautechsystems/nautilus_trader/blob/7f0e93dfa3f09ca165a5f3292a45fafbb5681561/crates/backtest/tests/exchange.rs)
+  for native account-adjustment settlement.
+
+An rc2 limitation remains visible rather than patched: Portfolio's external
+bar cache is keyed by instrument rather than BID/ASK side. With the observed
+BID-then-ASK dispatch order, completed-pair portfolio equity reflects the final
+ASK close for both long and short positions. G0.9 records and evaluates that
+native rc2 portfolio value because synthesizing quotes or maintaining a second
+P/L ledger is explicitly out of scope. Execution matching itself continues to
+use Nautilus's native paired BID/ASK path.
+
 ## Known evaluation limits
 
 - The integration surface currently expects its owner to forward native

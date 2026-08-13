@@ -29,6 +29,7 @@ from ftmoquant.backtest.execution_harness import (
     run_eurusd_execution,
 )
 from ftmoquant.data.dukascopy import SourceBar, _eurusd_instrument, _to_nautilus_bars
+from ftmoquant.prop_rules import EvaluationPhase
 
 START = datetime(2024, 1, 2, tzinfo=UTC)
 RULE_CONFIG = Path("config/prop/ftmo_2step_swing_2026-08.yaml").resolve()
@@ -321,8 +322,10 @@ def _run(
     fixed_fee: Decimal = Decimal(0),
     adaptive: bool = False,
     rollover: bool = False,
+    rollover_records: tuple[InterestRateInput, ...] | None = None,
     plan: ProbePlan | None = None,
     mode: RunMode = RunMode.TEST,
+    ftmo_phase: EvaluationPhase = EvaluationPhase.CHALLENGE,
 ):
     bars = ParquetDataCatalog(str(root / "catalog")).query_bars(
         ["EUR/USD.DUKASCOPY-1-MINUTE-ASK-EXTERNAL"]
@@ -333,8 +336,12 @@ def _run(
         rollover_config = RolloverConfig(
             mode=RolloverMode.FX_INTEREST,
             records=(
-                InterestRateInput("EA19", "2024-01", Decimal("4")),
-                InterestRateInput("USA", "2024-01", Decimal("1")),
+                rollover_records
+                if rollover_records is not None
+                else (
+                    InterestRateInput("EA19", "2024-01", Decimal("4")),
+                    InterestRateInput("USA", "2024-01", Decimal("1")),
+                )
             ),
         )
         calibration = CalibrationStatus.PROXY
@@ -372,6 +379,7 @@ def _run(
         probe=default_plan if plan is None else plan,
         requested_start_ns=bars[0].ts_init,
         requested_end_ns=bars[-1].ts_init,
+        ftmo_phase=ftmo_phase,
         mode=mode,
     )
     return run_eurusd_execution(request)
