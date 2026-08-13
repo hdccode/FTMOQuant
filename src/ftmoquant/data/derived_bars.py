@@ -155,8 +155,16 @@ def derive_eurusd_bars(output_root: Path) -> DerivationResult:
             )
 
     _validate_bid_ask_coverage(series)
+    coverage_status, research_ready, readiness_reasons = _research_readiness(series)
     manifest = _derived_manifest(
-        parent_sha256, parent_manifest, series, catalog_path, root
+        parent_sha256,
+        parent_manifest,
+        series,
+        catalog_path,
+        root,
+        coverage_status,
+        research_ready,
+        readiness_reasons,
     )
     manifest_path = root / DERIVED_MANIFEST_FILENAME
     manifest_bytes = (json.dumps(manifest, indent=2, sort_keys=True) + "\n").encode()
@@ -173,7 +181,7 @@ def derive_eurusd_bars(output_root: Path) -> DerivationResult:
         emitted_counts={
             item.target_bar_type: len(item.emitted_bars) for item in series
         },
-        research_ready=True,
+        research_ready=research_ready,
     )
 
 
@@ -466,6 +474,43 @@ def _validate_bid_ask_coverage(series: Sequence[SeriesResult]) -> None:
             )
 
 
+def _research_readiness(
+    series: Sequence[SeriesResult],
+) -> tuple[str, bool, list[str]]:
+    has_incomplete = any(
+        window.reason == "incomplete_or_nonconsecutive_minutes"
+        for item in series
+        for window in item.dropped_windows
+    )
+    has_unclassified = any(
+        window.reason == "no_source_updates"
+        for item in series
+        for window in item.dropped_windows
+    )
+    all_series_nonempty = all(item.emitted_bars for item in series)
+
+    if has_incomplete:
+        coverage_status = "incomplete"
+    elif has_unclassified:
+        coverage_status = "unclassified"
+    else:
+        coverage_status = "complete"
+
+    reasons: list[str] = []
+    if has_incomplete:
+        reasons.append("one or more aligned windows have missing source minutes")
+    if has_unclassified:
+        reasons.append(
+            "one or more no-update windows cannot be classified without a "
+            "session calendar"
+        )
+    if not all_series_nonempty:
+        reasons.append("one or more required 1H/4H BID/ASK series contain no bars")
+
+    research_ready = coverage_status == "complete" and all_series_nonempty
+    return coverage_status, research_ready, reasons
+
+
 def _preflight_idempotency(
     catalog: ParquetDataCatalog,
     series: Sequence[SeriesResult],
@@ -494,6 +539,9 @@ def _derived_manifest(
     series: Sequence[SeriesResult],
     catalog_path: Path,
     root: Path,
+    coverage_status: str,
+    research_ready: bool,
+    readiness_reasons: Sequence[str],
 ) -> dict[str, Any]:
     series_manifest: dict[str, Any] = {}
     emitted_counts: dict[str, dict[str, int]] = {"1H": {}, "4H": {}}
@@ -578,7 +626,10 @@ def _derived_manifest(
                 "ts_event/ts_init only; OHLCV is unmodified native output"
             ),
         },
-        "research_ready": True,
+        "derived_bar_integrity_valid": True,
+        "coverage_status": coverage_status,
+        "research_ready": research_ready,
+        "research_readiness_reasons": list(readiness_reasons),
         "bid_ask_derived_coverage_matches": True,
         "series": series_manifest,
     }

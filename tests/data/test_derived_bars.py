@@ -30,6 +30,11 @@ def test_sixty_contiguous_minutes_emit_exactly_one_hour(tmp_path: Path) -> None:
         assert len(bars) == 1
         assert bars[0].ts_event == _ns(START + timedelta(hours=1))
         assert bars[0].ts_init == bars[0].ts_event
+    manifest = _manifest(result.manifest_path)
+    assert manifest["derived_bar_integrity_valid"] is True
+    assert manifest["coverage_status"] == "incomplete"
+    assert manifest["research_ready"] is False
+    assert result.research_ready is manifest["research_ready"]
 
 
 def test_fifty_nine_minutes_emit_no_hour(tmp_path: Path) -> None:
@@ -42,6 +47,9 @@ def test_fifty_nine_minutes_emit_no_hour(tmp_path: Path) -> None:
     qa = manifest["series"][_target(1, "BID")]
     assert qa["dropped_incomplete_window_count"] == 1
     assert qa["dropped_window_details"][0]["observed_minutes"] == 59
+    assert manifest["coverage_status"] == "incomplete"
+    assert manifest["research_ready"] is False
+    assert result.research_ready is manifest["research_ready"]
 
 
 def test_two_hundred_forty_minutes_emit_one_four_hour_bar(
@@ -56,6 +64,19 @@ def test_two_hundred_forty_minutes_emit_one_four_hour_bar(
         bars = catalog.query_bars([_target(4, side)])
         assert len(bars) == 1
         assert bars[0].ts_event == _ns(START + timedelta(hours=4))
+
+
+def test_complete_dataset_is_research_ready(tmp_path: Path) -> None:
+    root = _catalog_root(tmp_path, range(24 * 60))
+
+    result = derive_eurusd_bars(root)
+
+    manifest = _manifest(result.manifest_path)
+    assert manifest["derived_bar_integrity_valid"] is True
+    assert manifest["coverage_status"] == "complete"
+    assert manifest["research_ready"] is True
+    assert manifest["research_readiness_reasons"] == []
+    assert result.research_ready is manifest["research_ready"]
 
 
 def test_missing_minute_inside_window_drops_window(tmp_path: Path) -> None:
@@ -97,8 +118,8 @@ def test_bid_ask_source_coverage_mismatch_is_rejected(tmp_path: Path) -> None:
 def test_weekend_no_update_intervals_never_emit_bars(tmp_path: Path) -> None:
     friday = datetime(2024, 1, 5, 20, tzinfo=UTC)
     monday = datetime(2024, 1, 8, 0, tzinfo=UTC)
-    timestamps = [friday + timedelta(minutes=index) for index in range(60)]
-    timestamps.extend(monday + timedelta(minutes=index) for index in range(60))
+    timestamps = [friday + timedelta(minutes=index) for index in range(240)]
+    timestamps.extend(monday + timedelta(minutes=index) for index in range(240))
     root = _catalog_root_from_timestamps(tmp_path, timestamps)
 
     result = derive_eurusd_bars(root)
@@ -107,11 +128,15 @@ def test_weekend_no_update_intervals_never_emit_bars(tmp_path: Path) -> None:
         [_target(1, "BID")]
     )
     assert [bar.ts_event for bar in bars] == [
-        _ns(friday + timedelta(hours=1)),
-        _ns(monday + timedelta(hours=1)),
+        *[_ns(friday + timedelta(hours=hour)) for hour in range(1, 5)],
+        *[_ns(monday + timedelta(hours=hour)) for hour in range(1, 5)],
     ]
     qa = _manifest(result.manifest_path)["series"][_target(1, "BID")]
-    assert qa["no_update_window_count"] == 94
+    assert qa["no_update_window_count"] == 88
+    manifest = _manifest(result.manifest_path)
+    assert manifest["coverage_status"] == "unclassified"
+    assert manifest["research_ready"] is False
+    assert result.research_ready is manifest["research_ready"]
 
 
 def test_utc_alignment_and_native_ohlcv_are_preserved(tmp_path: Path) -> None:

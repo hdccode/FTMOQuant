@@ -180,6 +180,15 @@ complete. Replay starts one nanosecond before the first eligible boundary so
 rc2 sees the full interval while the configured skip remains enabled. Window
 membership validation still independently rejects every partial first window.
 
+Derived-bar integrity and dataset coverage readiness are separate. Passing the
+native-output, complete-window, timestamp, and BID/ASK checks sets
+`derived_bar_integrity_valid=true` and preserves every valid emitted bar. It
+does not by itself make the dataset research-ready. Any incomplete source
+window makes coverage `incomplete`; any otherwise gap-free no-update window is
+`unclassified`, because G0.6 has no session or holiday calendar with which to
+identify a legitimate market closure. Only datasets with no dropped windows
+and at least one bar in all four required series are marked research-ready.
+
 ## Known evaluation limits
 
 - The integration surface currently expects its owner to forward native
