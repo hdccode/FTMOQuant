@@ -21,6 +21,7 @@ fixture result is asserted across two independent engine instances.
 | Project | Repository | License | Intended role | Adoption status |
 | --- | --- | --- | --- | --- |
 | NautilusTrader | [nautechsystems/nautilus_trader](https://github.com/nautechsystems/nautilus_trader) | LGPL-3.0-or-later | Event-driven backtest/live trading core | Adopt provisionally at exactly PyPI `2.0.0rc2`; the locked macOS ARM64 wheel is SHA-256 `a271f0cfd82a75ade4da19b6ead495acb01c1b19de6b1a82da414950887cdd52` |
+| tradedesk-dukascopy | [radiusred/tradedesk-dukascopy](https://github.com/radiusred/tradedesk-dukascopy) | Apache-2.0 | Dukascopy BI5 acquisition, recovery, decoding, scale probe, and 1-minute export | Adopt at exactly `1.0.0` / commit `b8fb503c9291d6e265949d008e288b76b68fb852`; FTMOQuant calls its public export CLI contract and retains its CSV metadata sidecars |
 | LEAN | [QuantConnect/Lean](https://github.com/QuantConnect/Lean) | Apache-2.0 | Full event-driven trading engine alternative | Not adopted; .NET-centric runtime adds operational weight to this Python project |
 | vectorbt | [polakowo/vectorbt](https://github.com/polakowo/vectorbt) | Apache-2.0 + Commons Clause | Vectorized research and parameter exploration | Deferred; useful research complement, not the execution/accounting core |
 | Backtrader | [mementum/backtrader](https://github.com/mementum/backtrader) | GPL-3.0 | Python event-driven backtester | Not adopted; license and legacy architecture are a poor core fit |
@@ -79,6 +80,41 @@ NautilusTrader was consumed as the exact published `2.0.0rc2` wheel rather
 than adapted from a source checkout, so no upstream Git commit is claimed for
 that artifact. The repository does not expose a matching immutable v2 tag in
 the reviewed tag set; the lockfile records the exact wheel hashes instead.
+
+## G0.5 data-source provenance
+
+[`radiusred/tradedesk-dukascopy`](https://github.com/radiusred/tradedesk-dukascopy)
+at commit
+[`b8fb503c9291d6e265949d008e288b76b68fb852`](https://github.com/radiusred/tradedesk-dukascopy/commit/b8fb503c9291d6e265949d008e288b76b68fb852),
+released as `tradedesk-dukascopy==1.0.0`, is Apache-2.0 licensed. It is the
+adopted provider boundary for BI5 download, decompression, tick decoding,
+retry/backoff, cache repair, gap recovery, scale probing, and UTC one-minute
+BID/ASK CSV export. FTMOQuant does not reimplement those facilities.
+
+FTMOQuant invokes the upstream `tradedesk-dc-export` entry point through its
+Python CLI function. It preserves both generated CSVs and their upstream
+`.meta.json` sidecars under the operator-selected output root. The configured
+price divisor is explicit, checked against both sidecars, and recorded in the
+FTMOQuant provenance manifest. Operators use the upstream `--probe` mode before
+choosing it; FTMOQuant contains no Dukascopy divisor table.
+
+The following QA patterns were adapted, with new FTMOQuant code rather than
+copied source:
+
+- From `scripts/dukascopy_audit.py`: align BID/ASK observations by UTC minute,
+  surface absent intervals explicitly, and reject impossible spreads. The
+  FTMOQuant boundary is stricter: BID and ASK coverage must match exactly and
+  every comparable ASK OHLC field must be at least its BID field.
+- From `scripts/audit_fx_scale.py` and `tests/test_audit_fx_scale.py`: fail on
+  prices outside a deliberately broad natural FX-rate envelope. FTMOQuant uses
+  this only to catch obvious EUR/USD power-of-ten corruption; it neither infers
+  nor substitutes a divisor.
+
+Validated rows are encoded as Arrow IPC and passed to NautilusTrader
+`2.0.0rc2` `BarDataWrangler`. The resulting external BID/ASK bars and EUR/USD
+instrument are stored only through `ParquetDataCatalog`. PyArrow is a direct
+dependency solely because the v2 wrangler accepts Arrow IPC bytes rather than
+a pandas DataFrame.
 
 ## Known evaluation limits
 

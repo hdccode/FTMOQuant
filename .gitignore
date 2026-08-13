@@ -14,6 +14,11 @@ htmlcov/
 dist/
 build/
 
+# Local market-data exports and Nautilus catalogs
+/data/
+/market-data/
+/catalog/
+
 .env
 .DS_Store
 .idea/
