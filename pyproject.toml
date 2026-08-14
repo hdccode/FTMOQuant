@@ -24,6 +24,7 @@ ftmoquant-ingest-hf-eurusd = "ftmoquant.data.hf_dukascopy:main"
 ftmoquant-derive-eurusd-bars = "ftmoquant.data.derived_bars:main"
 ftmoquant-qa-eurusd-coverage = "ftmoquant.data.session_coverage:main"
 ftmoquant-reconcile-eurusd-gaps = "ftmoquant.data.session_reconciliation:main"
+ftmoquant-correct-eurusd = "ftmoquant.data.canonical_correction:main"
 
 [dependency-groups]
 dev = [

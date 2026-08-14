@@ -26,6 +26,7 @@ from tradedesk_dukascopy.export import (  # type: ignore[import-untyped]
 )
 
 from ftmoquant.data.canonical_source import (
+    CORRECTED_INGESTION_VERSION,
     HF_INGESTION_VERSION,
     validate_canonical_eurusd_source_manifest,
 )
@@ -638,9 +639,12 @@ def _validate_inputs(
             f"expected tradedesk-dukascopy {UPSTREAM_VERSION}"
         )
     identity = validate_canonical_eurusd_source_manifest(provenance)
-    if identity.ingestion_version != HF_INGESTION_VERSION:
+    if identity.ingestion_version not in {
+        HF_INGESTION_VERSION,
+        CORRECTED_INGESTION_VERSION,
+    }:
         raise ReconciliationValidationError(
-            "reconciliation requires the frozen Hugging Face canonical source"
+            "reconciliation requires the frozen or explicitly corrected G1 source"
         )
     expected_provenance = {
         "dataset_id": plan.dataset_id,

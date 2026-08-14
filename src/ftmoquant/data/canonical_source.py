@@ -16,7 +16,11 @@ from ftmoquant.data.dukascopy import INSTRUMENT_ID, NAUTILUS_VERSION
 
 LEGACY_INGESTION_VERSION = "g0.5-1"
 HF_INGESTION_VERSION = "g1-hf-dukascopy-1"
-TRUSTED_INGESTION_VERSIONS = frozenset({LEGACY_INGESTION_VERSION, HF_INGESTION_VERSION})
+CORRECTED_INGESTION_VERSION = "g1-dukascopy-corrected-1"
+CORRECTED_DISTRIBUTION_SOURCE = "Hugging Face + direct Dukascopy BI5 correction"
+TRUSTED_INGESTION_VERSIONS = frozenset(
+    {LEGACY_INGESTION_VERSION, HF_INGESTION_VERSION, CORRECTED_INGESTION_VERSION}
+)
 _SHA256 = re.compile(r"[0-9a-f]{64}")
 _GIT_SHA = re.compile(r"[0-9a-f]{40}")
 _MINUTE_NS = 60_000_000_000
@@ -210,14 +214,29 @@ def validate_canonical_eurusd_source_manifest(
     if ingestion_version == HF_INGESTION_VERSION:
         _validate_hf_identity(manifest, cast(dict[str, Any], qa))
         return CanonicalSourceIdentity(ingestion_version, "Hugging Face")
+    if ingestion_version == CORRECTED_INGESTION_VERSION:
+        _validate_hf_identity(
+            manifest,
+            cast(dict[str, Any], qa),
+            distribution_source=CORRECTED_DISTRIBUTION_SOURCE,
+        )
+        _validate_correction_identity(manifest)
+        return CanonicalSourceIdentity(
+            ingestion_version, CORRECTED_DISTRIBUTION_SOURCE
+        )
     raise CanonicalSourceValidationError(
         "canonical source manifest has an untrusted ingestion_version"
     )
 
 
-def _validate_hf_identity(manifest: dict[str, Any], qa: dict[str, Any]) -> None:
+def _validate_hf_identity(
+    manifest: dict[str, Any],
+    qa: dict[str, Any],
+    *,
+    distribution_source: str = "Hugging Face",
+) -> None:
     expected = {
-        "distribution_source": "Hugging Face",
+        "distribution_source": distribution_source,
         "dataset_repo": "mito0o852/dukascopy-ticks",
         "market_data_origin": "Dukascopy",
         "source_timestamp_convention": "raw_unix_epoch_milliseconds_to_bar_open_utc",
@@ -291,3 +310,61 @@ def _validate_hf_identity(manifest: dict[str, Any], qa: dict[str, Any]) -> None:
             raise CanonicalSourceValidationError(
                 "Hugging Face source manifest has invalid source file provenance"
             )
+
+
+def _validate_correction_identity(manifest: dict[str, Any]) -> None:
+    parent = manifest.get("parent_canonical")
+    correction = manifest.get("correction")
+    equivalence = manifest.get("parent_equivalence")
+    if not isinstance(parent, dict) or not isinstance(correction, dict):
+        raise CanonicalSourceValidationError(
+            "corrected source manifest lacks parent/correction provenance"
+        )
+    if not isinstance(equivalence, dict):
+        raise CanonicalSourceValidationError(
+            "corrected source manifest lacks parent equivalence proof"
+        )
+    if (
+        parent.get("ingestion_version") != HF_INGESTION_VERSION
+        or not isinstance(parent.get("file_sha256"), str)
+        or _SHA256.fullmatch(cast(str, parent["file_sha256"])) is None
+        or not isinstance(parent.get("semantic_sha256"), str)
+        or _SHA256.fullmatch(cast(str, parent["semantic_sha256"])) is None
+    ):
+        raise CanonicalSourceValidationError(
+            "corrected source manifest has invalid parent identity"
+        )
+    expected_minutes = {
+        "2023-11-14T13:31:00Z",
+        "2023-11-29T14:29:00Z",
+        "2023-11-29T14:30:00Z",
+        "2023-11-29T14:31:00Z",
+        "2023-11-29T14:32:00Z",
+        "2023-11-29T14:33:00Z",
+        "2023-11-29T14:34:00Z",
+    }
+    raw_minutes = correction.get("corrected_minutes")
+    if (
+        correction.get("identity") != CORRECTED_INGESTION_VERSION
+        or correction.get("fills_or_interpolation") is not False
+        or correction.get("holdout_accessed") is not False
+        or correction.get("holdout_rows_admitted") != 0
+        or not isinstance(raw_minutes, list)
+        or {item.get("timestamp_utc") for item in raw_minutes if isinstance(item, dict)}
+        != expected_minutes
+        or len(raw_minutes) != len(expected_minutes)
+    ):
+        raise CanonicalSourceValidationError(
+            "corrected source manifest has invalid exact-minute provenance"
+        )
+    if (
+        equivalence.get("parent_bid_bars_unchanged") is not True
+        or equivalence.get("parent_ask_bars_unchanged") is not True
+        or equivalence.get("parent_timestamps_removed") != 0
+        or equivalence.get("new_bid_timestamp_count") != 7
+        or equivalence.get("new_ask_timestamp_count") != 7
+        or equivalence.get("other_changed_or_added_bar_count") != 0
+    ):
+        raise CanonicalSourceValidationError(
+            "corrected source manifest lacks an exact parent equivalence proof"
+        )

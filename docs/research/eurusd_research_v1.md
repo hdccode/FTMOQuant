@@ -31,6 +31,14 @@ fill, interpolation, forward-fill, holiday bar, or weekend bar is created.
 Canonical one-minute timestamps use the UTC minute open as `ts_event` and the
 minute close as `ts_init`.
 
+The independently verified omissions at `2023-11-14T13:31:00Z` and
+`2023-11-29T14:29:00Z` through `14:34:00Z` are represented only in the immutable
+child identity `g1-dukascopy-corrected-1`. Its source is the reconciliation-bound
+direct Dukascopy BI5 evidence, aggregated with the same production HF importer
+semantics. The original `eurusd_research_v1` root remains unchanged; the child
+adds exactly seven paired minutes and regenerates 1H/4H data from canonical 1m
+bars.
+
 ## Research boundary
 
 This work prepares and validates research data only. The integration smoke was

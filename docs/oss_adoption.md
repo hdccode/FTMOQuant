@@ -379,6 +379,33 @@ can only become `verified_no_tick` after a successful, validated direct BI5
 retrieval proves that exact minute contains no tick; retrieval failure, HTTP
 404, malformed payloads, or a direct tick all remain fail-closed.
 
+## G1 canonical omission correction
+
+The seven direct-tick omissions established by reconciliation are corrected by
+`g1-dukascopy-corrected-1`, a distinct immutable child of the frozen Hugging
+Face canonical dataset. The command accepts only the two reconciliation-bound
+BI5 cache objects, validates their content hashes and hour counts, and requires
+the exact seven minute counts before any child catalog write. It reuses the HF
+importer's minute transition and bar encoding helpers for side-specific
+first/max/min/last, same-side volume, precision, bar types, and timestamps.
+
+The child catalog is streamed from the parent because Nautilus catalog files
+must have disjoint physical timestamp spans. Every parent `Bar` object is
+written unchanged while the seven BID and seven ASK additions are merged into
+bounded disjoint chunks. A second streaming merge proves all parent bars still
+compare equal, no parent timestamp disappeared, and no non-target bar appeared.
+The correction manifest binds the parent, research plan, reconciliation, BI5
+objects, exact minute counts, canonical content hashes, and equivalence proof
+with deterministic semantic hashes. It records no synthesis, interpolation, or
+holdout access.
+
+G0.6, session coverage, and reconciliation then run from the corrected
+canonical root without directly patching derived data. Final readiness is a
+separate semantically hashed freeze artifact and remains fail-closed unless
+derived integrity passes, reconciliation has zero unexplained minutes, all
+remaining expected-open gaps are independently reconciled, and the holdout and
+strategy-return access flags remain false.
+
 ## Multi-year G0.6 and session-QA catalog streaming
 
 The full G1 development-plus-validation catalog contains several million
@@ -411,8 +438,8 @@ The shared canonical scanner first performs a complete read-only validation
 pass before any derived write. It carries only the previous BID/ASK timestamp
 and counts, while preserving exact type, minute alignment, open/close
 timestamp, chronology, manifest count, range, and paired-coverage checks. It
-continues to admit only `g0.5-1` and `g1-hf-dukascopy-1`; no provenance rule was
-relaxed.
+admits only `g0.5-1`, `g1-hf-dukascopy-1`, and the explicitly lineage-bound
+`g1-dukascopy-corrected-1`; no generic provenance rule was added.
 
 During the second G0.6 pass, each 1H/4H side retains only its current partial
 aligned window (at most 240 source bars), complete eligible windows from the

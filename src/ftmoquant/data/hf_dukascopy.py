@@ -656,20 +656,47 @@ def _consume_tick(
     bid_volume: Decimal,
     ask_volume: Decimal,
 ) -> None:
+    current, completed = _advance_minute_aggregate(
+        state.current,
+        timestamp_ms,
+        bid,
+        ask,
+        bid_volume,
+        ask_volume,
+    )
+    if completed is not None:
+        _emit_aggregate(state, completed)
+    state.current = current
+
+
+def _advance_minute_aggregate(
+    current: _MinuteAggregate | None,
+    timestamp_ms: int,
+    bid: Decimal,
+    ask: Decimal,
+    bid_volume: Decimal,
+    ask_volume: Decimal,
+) -> tuple[_MinuteAggregate, _MinuteAggregate | None]:
+    """Apply the production HF tick-to-minute transition without catalog I/O."""
+
     minute_ms = (timestamp_ms // _MINUTE_MS) * _MINUTE_MS
-    if state.current is None:
-        state.current = _MinuteAggregate.from_tick(
-            minute_ms, bid, ask, bid_volume, ask_volume
+    if current is None:
+        return (
+            _MinuteAggregate.from_tick(
+                minute_ms, bid, ask, bid_volume, ask_volume
+            ),
+            None,
         )
-        return
-    if minute_ms == state.current.minute_ms:
-        state.current.update(bid, ask, bid_volume, ask_volume)
-        return
-    if minute_ms < state.current.minute_ms:
+    if minute_ms == current.minute_ms:
+        current.update(bid, ask, bid_volume, ask_volume)
+        return current, None
+    if minute_ms < current.minute_ms:
         raise HfDukascopyValidationError("minute aggregation received backwards ticks")
-    _emit_current(state)
-    state.current = _MinuteAggregate.from_tick(
-        minute_ms, bid, ask, bid_volume, ask_volume
+    return (
+        _MinuteAggregate.from_tick(
+            minute_ms, bid, ask, bid_volume, ask_volume
+        ),
+        current,
     )
 
 
@@ -677,6 +704,10 @@ def _emit_current(state: _StreamState) -> None:
     item = state.current
     if item is None:
         return
+    _emit_aggregate(state, item)
+
+
+def _emit_aggregate(state: _StreamState, item: _MinuteAggregate) -> None:
     if state.last_emitted_minute_ms is not None and item.minute_ms <= (
         state.last_emitted_minute_ms
     ):
@@ -687,22 +718,7 @@ def _emit_current(state: _StreamState) -> None:
             _missing_range(state.next_expected_minute, timestamp - _ONE_MINUTE)
         )
     state.next_expected_minute = timestamp + _ONE_MINUTE
-    bid = SourceBar(
-        timestamp,
-        item.bid_open,
-        item.bid_high,
-        item.bid_low,
-        item.bid_close,
-        item.bid_volume,
-    )
-    ask = SourceBar(
-        timestamp,
-        item.ask_open,
-        item.ask_high,
-        item.ask_low,
-        item.ask_close,
-        item.ask_volume,
-    )
+    bid, ask = _source_bar_pair(item)
     for field in ("open", "high", "low", "close"):
         if getattr(ask, field) < getattr(bid, field):
             raise HfDukascopyValidationError(
@@ -714,6 +730,30 @@ def _emit_current(state: _StreamState) -> None:
     state.last_emitted_minute_ms = item.minute_ms
     if len(state.bid_pending) >= _WRITE_CHUNK_BARS:
         _write_pending(state)
+
+
+def _source_bar_pair(item: _MinuteAggregate) -> tuple[SourceBar, SourceBar]:
+    """Encode one completed aggregate with the production HF bar semantics."""
+
+    timestamp = _datetime_from_ms(item.minute_ms)
+    return (
+        SourceBar(
+            timestamp,
+            item.bid_open,
+            item.bid_high,
+            item.bid_low,
+            item.bid_close,
+            item.bid_volume,
+        ),
+        SourceBar(
+            timestamp,
+            item.ask_open,
+            item.ask_high,
+            item.ask_low,
+            item.ask_close,
+            item.ask_volume,
+        ),
+    )
 
 
 def _write_pending(state: _StreamState) -> None:
