@@ -24,7 +24,10 @@ from ftmoquant.data.session_coverage import (
     run_eurusd_session_coverage_qa,
     run_instrument_session_coverage,
 )
-from ftmoquant.data.session_reconciliation import run_instrument_reconciliation
+from ftmoquant.data.session_reconciliation import (
+    acquire_instrument_reconciliation_batch,
+    run_instrument_reconciliation,
+)
 from ftmoquant.data.universe_plan import (
     ResearchUniversePlan,
     load_research_universe_plan,
@@ -40,6 +43,7 @@ from ftmoquant.data.universe_readiness import (
 
 __all__ = [
     "acquire_direct_cutoff_segment",
+    "acquire_instrument_reconciliation_batch",
     "IngestionResult",
     "IngestionValidationError",
     "InstrumentArtifactRef",

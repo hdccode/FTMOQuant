@@ -486,6 +486,97 @@ def run_instrument_reconciliation(
     )
 
 
+def acquire_instrument_reconciliation_batch(
+    plan_path: Path,
+    instrument_id: str,
+    output_root: Path,
+    cache_root: Path,
+    *,
+    offline_evidence_path: Path | None = None,
+    workers: int = 4,
+    max_uncached_hours: int = 200,
+    acquirer: DirectDukascopyAcquirer | None = None,
+) -> AcquisitionBatchResult:
+    """Warm a bounded instrument cache batch without writing a final manifest."""
+
+    if workers <= 0 or workers > 4:
+        raise ValueError("multi-instrument reconciliation workers must be in 1..4")
+    if max_uncached_hours <= 0:
+        raise ValueError("max_uncached_hours must be positive")
+    universe = load_research_universe_plan(plan_path)
+    instrument = universe.instrument(instrument_id)
+    plan = ResearchDataPlan(
+        dataset_id=universe.universe_id,
+        market_data_origin=universe.market_data_origin,
+        distribution_source=universe.distribution_source,
+        huggingface_repo=universe.huggingface_repo,
+        huggingface_revision=universe.huggingface_revision,
+        instrument=instrument.instrument_id,
+        full_start=universe.development.start,
+        full_end=universe.validation.end,
+        boundary_rule="explicit_whole_utc_days",
+        development=universe.development,
+        validation=universe.validation,
+        final_holdout=ResearchSplit(
+            start=universe.holdout_cutoff_utc.date(),
+            end=universe.holdout_cutoff_utc.date(),
+            days=1,
+        ),
+        g1_allowed_end_exclusive=universe.holdout_cutoff_utc,
+        semantic_sha256=universe.semantic_sha256,
+    )
+    root = output_root.resolve()
+    provenance_path = root / PARENT_MANIFEST_FILENAME
+    coverage_path = root / COVERAGE_MANIFEST_FILENAME
+    provenance = _load_json_object(provenance_path, "canonical provenance")
+    coverage = _load_json_object(coverage_path, "session coverage report")
+    missing = _validate_inputs(
+        plan,
+        plan_path,
+        provenance,
+        provenance_path,
+        coverage,
+        coverage_path,
+        instrument_spec=instrument,
+        session_policy_version=instrument.session_policy_id,
+        legacy=False,
+    )
+    offline_domains, _ = _load_offline_evidence(offline_evidence_path, plan)
+    required_hours = sorted(
+        {
+            _floor_hour(item.timestamp)
+            for item in missing
+            if item.missing_sides == _EXPECTED_MISSING_SIDES
+            and _offline_for_minute(item.timestamp, offline_domains) is None
+        }
+    )
+    verifier = acquirer or DirectDukascopyAcquirer(
+        cache_root, symbol=instrument.dataset_symbol
+    )
+    if verifier.symbol != instrument.dataset_symbol:
+        raise ReconciliationValidationError(
+            "BI5 acquirer symbol does not match instrument"
+        )
+    uncached = [
+        hour for hour in required_hours if not verifier.has_complete_cache_entry(hour)
+    ]
+    selected = uncached[:max_uncached_hours]
+    results = _acquire_hours(
+        selected,
+        verifier,
+        plan.g1_allowed_end_exclusive,
+        workers,
+        symbol=instrument.dataset_symbol,
+    )
+    verified = sum(result.outcome == _OUTCOME_VERIFIED for result in results.values())
+    return AcquisitionBatchResult(
+        selected_hour_count=len(selected),
+        verified_hour_count=verified,
+        failed_hour_count=len(selected) - verified,
+        remaining_uncached_hour_count=len(uncached) - verified,
+    )
+
+
 def acquire_eurusd_reconciliation_batch(
     plan_path: Path,
     output_root: Path,

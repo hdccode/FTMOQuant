@@ -31,6 +31,7 @@ from ftmoquant.data.session_coverage import run_instrument_session_coverage
 from ftmoquant.data.session_reconciliation import (
     DirectDukascopyAcquirer,
     HourVerification,
+    acquire_instrument_reconciliation_batch,
 )
 from ftmoquant.data.universe_plan import (
     ResearchUniversePlanValidationError,
@@ -223,6 +224,19 @@ def test_direct_cache_and_url_are_symbol_specific(tmp_path: Path) -> None:
     acquirer = DirectDukascopyAcquirer(tmp_path, symbol="GBPUSD")
     raw, _ = acquirer._cache_paths(datetime(2024, 8, 16, tzinfo=UTC))
     assert raw.relative_to(tmp_path).parts[0] == "GBPUSD"
+
+
+def test_generic_reconciliation_batch_enforces_conservative_worker_cap(
+    tmp_path: Path,
+) -> None:
+    with pytest.raises(ValueError, match="workers"):
+        acquire_instrument_reconciliation_batch(
+            PLAN,
+            GBPUSD_SPEC.instrument_id,
+            tmp_path / "canonical",
+            tmp_path / "cache",
+            workers=5,
+        )
 
 
 def test_direct_cutoff_segment_keeps_verified_zero_tick_hours_empty(
