@@ -13,13 +13,20 @@ from nautilus_trader.model import Bar
 from nautilus_trader.persistence import ParquetDataCatalog
 
 from ftmoquant.data.dukascopy import INSTRUMENT_ID, NAUTILUS_VERSION
+from ftmoquant.data.instruments import EURUSD_SPEC, InstrumentSpec
 
 LEGACY_INGESTION_VERSION = "g0.5-1"
 HF_INGESTION_VERSION = "g1-hf-dukascopy-1"
 CORRECTED_INGESTION_VERSION = "g1-dukascopy-corrected-1"
 CORRECTED_DISTRIBUTION_SOURCE = "Hugging Face + direct Dukascopy BI5 correction"
+GENERIC_CORRECTED_INGESTION_VERSION = "g1.4a-dukascopy-corrected-1"
 TRUSTED_INGESTION_VERSIONS = frozenset(
-    {LEGACY_INGESTION_VERSION, HF_INGESTION_VERSION, CORRECTED_INGESTION_VERSION}
+    {
+        LEGACY_INGESTION_VERSION,
+        HF_INGESTION_VERSION,
+        CORRECTED_INGESTION_VERSION,
+        GENERIC_CORRECTED_INGESTION_VERSION,
+    }
 )
 _SHA256 = re.compile(r"[0-9a-f]{64}")
 _GIT_SHA = re.compile(r"[0-9a-f]{40}")
@@ -59,6 +66,29 @@ def iter_paired_eurusd_source_chunks(
 ) -> Iterator[PairedSourceChunk]:
     """Yield strictly validated paired bars without materializing the catalog."""
 
+    yield from iter_paired_source_chunks(
+        catalog,
+        manifest,
+        EURUSD_SPEC,
+        start_ns,
+        end_ns,
+        chunk_minutes=chunk_minutes,
+    )
+
+
+def iter_paired_source_chunks(
+    catalog: ParquetDataCatalog,
+    manifest: dict[str, Any],
+    instrument: InstrumentSpec,
+    start_ns: int,
+    end_ns: int,
+    *,
+    chunk_minutes: int,
+) -> Iterator[PairedSourceChunk]:
+    """Yield a bounded paired BID/ASK stream for one exact instrument."""
+
+    instrument.validate()
+
     if start_ns % _MINUTE_NS or end_ns % _MINUTE_NS or end_ns <= start_ns:
         raise CanonicalSourceValidationError(
             "canonical source scan requires a non-empty minute-aligned range"
@@ -81,7 +111,7 @@ def iter_paired_eurusd_source_chunks(
         expected_counts[side] = value
 
     for side in _SIDES:
-        identifier = _source_bar_type(side)
+        identifier = instrument.bar_type(minutes=1, side=side, aggregation="EXTERNAL")
         first_init = catalog.query_first_timestamp("bars", identifier)
         last_init = catalog.query_last_timestamp("bars", identifier)
         if first_init is None or last_init is None:
@@ -101,7 +131,9 @@ def iter_paired_eurusd_source_chunks(
         chunk_end = min(chunk_start + chunk_ns, end_ns)
         by_side: dict[str, tuple[Bar, ...]] = {}
         for side in _SIDES:
-            identifier = _source_bar_type(side)
+            identifier = instrument.bar_type(
+                minutes=1, side=side, aggregation="EXTERNAL"
+            )
             queried = catalog.query_bars([identifier], start=chunk_start, end=chunk_end)
             bars = tuple(
                 bar for bar in queried if chunk_start <= bar.ts_event < chunk_end
@@ -158,8 +190,21 @@ def validate_canonical_eurusd_source_manifest(
 ) -> CanonicalSourceIdentity:
     """Validate common canonical fields and one of two explicit provenances."""
 
+    identity = validate_canonical_source_manifest(manifest, EURUSD_SPEC)
+    if identity.ingestion_version == CORRECTED_INGESTION_VERSION:
+        _validate_correction_identity(manifest)
+    return identity
+
+
+def validate_canonical_source_manifest(
+    manifest: dict[str, Any], instrument: InstrumentSpec
+) -> CanonicalSourceIdentity:
+    """Validate common canonical fields against an explicit instrument spec."""
+
+    instrument.validate()
+
     expected = {
-        "instrument_id": INSTRUMENT_ID,
+        "instrument_id": instrument.instrument_id,
         "source_granularity": "1-minute",
         "price_sides": ["BID", "ASK"],
         "nautilus_version": NAUTILUS_VERSION,
@@ -169,7 +214,10 @@ def validate_canonical_eurusd_source_manifest(
             raise CanonicalSourceValidationError(
                 f"canonical source manifest has incompatible {field}"
             )
-    for field, expected_value in {"provider": "Dukascopy", "symbol": "EURUSD"}.items():
+    for field, expected_value in {
+        "provider": "Dukascopy",
+        "symbol": instrument.dataset_symbol,
+    }.items():
         if field in manifest and manifest[field] != expected_value:
             raise CanonicalSourceValidationError(
                 f"canonical source manifest has incompatible {field}"
@@ -182,8 +230,8 @@ def validate_canonical_eurusd_source_manifest(
             )
         typed_encoding = cast(dict[str, Any], encoding)
         expected_encoding = {
-            "price_precision": 5,
-            "size_precision": 8,
+            "price_precision": instrument.price_precision,
+            "size_precision": instrument.size_precision,
             "ts_event": "bar_open_utc",
             "ts_init": "bar_close_utc",
         }
@@ -212,18 +260,40 @@ def validate_canonical_eurusd_source_manifest(
             )
         return CanonicalSourceIdentity(ingestion_version, "tradedesk-dukascopy")
     if ingestion_version == HF_INGESTION_VERSION:
-        _validate_hf_identity(manifest, cast(dict[str, Any], qa))
-        return CanonicalSourceIdentity(ingestion_version, "Hugging Face")
+        distribution = manifest.get("distribution_source")
+        if distribution not in {
+            "Hugging Face",
+            "Hugging Face + direct Dukascopy cutoff completion",
+        }:
+            raise CanonicalSourceValidationError(
+                "Hugging Face source manifest has incompatible distribution_source"
+            )
+        _validate_hf_identity(
+            manifest,
+            cast(dict[str, Any], qa),
+            instrument=instrument,
+            distribution_source=cast(str, distribution),
+        )
+        if distribution != "Hugging Face":
+            _validate_hybrid_segments(manifest)
+        return CanonicalSourceIdentity(ingestion_version, cast(str, distribution))
     if ingestion_version == CORRECTED_INGESTION_VERSION:
         _validate_hf_identity(
             manifest,
             cast(dict[str, Any], qa),
             distribution_source=CORRECTED_DISTRIBUTION_SOURCE,
+            instrument=instrument,
         )
-        _validate_correction_identity(manifest)
-        return CanonicalSourceIdentity(
-            ingestion_version, CORRECTED_DISTRIBUTION_SOURCE
+        return CanonicalSourceIdentity(ingestion_version, CORRECTED_DISTRIBUTION_SOURCE)
+    if ingestion_version == GENERIC_CORRECTED_INGESTION_VERSION:
+        _validate_hf_identity(
+            manifest,
+            cast(dict[str, Any], qa),
+            distribution_source=CORRECTED_DISTRIBUTION_SOURCE,
+            instrument=instrument,
         )
+        _validate_generic_correction_identity(manifest)
+        return CanonicalSourceIdentity(ingestion_version, CORRECTED_DISTRIBUTION_SOURCE)
     raise CanonicalSourceValidationError(
         "canonical source manifest has an untrusted ingestion_version"
     )
@@ -234,6 +304,7 @@ def _validate_hf_identity(
     qa: dict[str, Any],
     *,
     distribution_source: str = "Hugging Face",
+    instrument: InstrumentSpec = EURUSD_SPEC,
 ) -> None:
     expected = {
         "distribution_source": distribution_source,
@@ -241,7 +312,7 @@ def _validate_hf_identity(
         "market_data_origin": "Dukascopy",
         "source_timestamp_convention": "raw_unix_epoch_milliseconds_to_bar_open_utc",
         "provider": "Dukascopy",
-        "symbol": "EURUSD",
+        "symbol": instrument.dataset_symbol,
     }
     for field, value in expected.items():
         if manifest.get(field) != value:
@@ -285,6 +356,17 @@ def _validate_hf_identity(
         raise CanonicalSourceValidationError(
             "Hugging Face source manifest must prove no fills or interpolation"
         )
+    if manifest.get("dataset_id") == "g1_4_fx_usd_liquid_v1":
+        rights = manifest.get("data_use_rights")
+        if (
+            not isinstance(rights, dict)
+            or not isinstance(rights.get("evidence_sha256"), str)
+            or _SHA256.fullmatch(cast(str, rights["evidence_sha256"])) is None
+            or rights.get("release_blocker_resolved_for_this_acquisition") is not True
+        ):
+            raise CanonicalSourceValidationError(
+                "G1.4 source manifest lacks immutable data-use-rights evidence"
+            )
     source_files = manifest.get("source_files")
     if not isinstance(source_files, list) or not source_files:
         raise CanonicalSourceValidationError(
@@ -300,7 +382,7 @@ def _validate_hf_identity(
         size = item.get("downloaded_size")
         if (
             not isinstance(path, str)
-            or not path.startswith("data/EURUSD/")
+            or not path.startswith(f"data/{instrument.dataset_symbol}/")
             or not isinstance(file_sha, str)
             or _SHA256.fullmatch(file_sha) is None
             or not isinstance(size, int)
@@ -368,3 +450,65 @@ def _validate_correction_identity(manifest: dict[str, Any]) -> None:
         raise CanonicalSourceValidationError(
             "corrected source manifest lacks an exact parent equivalence proof"
         )
+
+
+def _validate_hybrid_segments(manifest: dict[str, Any]) -> None:
+    segments = manifest.get("source_segments")
+    if not isinstance(segments, list) or len(segments) not in {1, 2}:
+        raise CanonicalSourceValidationError(
+            "hybrid source manifest has invalid segments"
+        )
+    if not isinstance(segments[0], dict) or segments[0].get("kind") != (
+        "pinned_hugging_face_parquet"
+    ):
+        raise CanonicalSourceValidationError(
+            "hybrid source lacks its pinned HF segment"
+        )
+    if segments[0].get("overlaps_next_segment") is not False:
+        raise CanonicalSourceValidationError("hybrid source segments may not overlap")
+    if len(segments) == 2:
+        direct = segments[1]
+        if (
+            not isinstance(direct, dict)
+            or direct.get("kind") != "direct_dukascopy_bi5_cutoff_completion"
+            or direct.get("overlaps_previous_segment") is not False
+            or direct.get("start_utc") != segments[0].get("end_exclusive_utc")
+            or not isinstance(direct.get("evidence_sha256"), str)
+            or _SHA256.fullmatch(cast(str, direct["evidence_sha256"])) is None
+        ):
+            raise CanonicalSourceValidationError(
+                "hybrid direct segment is not contiguous and immutable"
+            )
+
+
+def _validate_generic_correction_identity(manifest: dict[str, Any]) -> None:
+    parent = manifest.get("parent_canonical")
+    correction = manifest.get("correction")
+    equivalence = manifest.get("parent_equivalence")
+    if not all(isinstance(item, dict) for item in (parent, correction, equivalence)):
+        raise CanonicalSourceValidationError(
+            "generic correction lacks parent, correction, or equivalence lineage"
+        )
+    typed_parent = cast(dict[str, Any], parent)
+    typed_correction = cast(dict[str, Any], correction)
+    typed_equivalence = cast(dict[str, Any], equivalence)
+    minutes = typed_correction.get("corrected_minutes_utc")
+    if (
+        typed_parent.get("ingestion_version") != HF_INGESTION_VERSION
+        or not isinstance(typed_parent.get("file_sha256"), str)
+        or _SHA256.fullmatch(cast(str, typed_parent["file_sha256"])) is None
+        or typed_correction.get("identity") != GENERIC_CORRECTED_INGESTION_VERSION
+        or not isinstance(minutes, list)
+        or not minutes
+        or len(minutes) != len(set(minutes))
+        or typed_correction.get("fills_or_interpolation") is not False
+        or typed_correction.get("holdout_accessed") is not False
+        or typed_correction.get("holdout_rows_admitted") != 0
+        or typed_equivalence.get("parent_bid_bars_unchanged") is not True
+        or typed_equivalence.get("parent_ask_bars_unchanged") is not True
+        or typed_equivalence.get("parent_timestamps_removed") != 0
+        or typed_equivalence.get("new_bid_timestamp_count") != len(minutes)
+        or typed_equivalence.get("new_ask_timestamp_count") != len(minutes)
+        or typed_equivalence.get("other_changed_or_added_bar_count") != 0
+    ):
+        raise CanonicalSourceValidationError("generic correction lineage is invalid")

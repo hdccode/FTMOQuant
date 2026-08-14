@@ -17,8 +17,9 @@ from nautilus_trader.persistence import ParquetDataCatalog
 
 from ftmoquant.data.canonical_source import (
     CanonicalSourceValidationError,
-    iter_paired_eurusd_source_chunks,
+    iter_paired_source_chunks,
     validate_canonical_eurusd_source_manifest,
+    validate_canonical_source_manifest,
 )
 from ftmoquant.data.derived_bars import (
     DERIVATION_VERSION,
@@ -30,10 +31,12 @@ from ftmoquant.data.dukascopy import (
     INSTRUMENT_ID,
     NAUTILUS_VERSION,
 )
+from ftmoquant.data.instruments import EURUSD_SPEC, InstrumentSpec
 
 COVERAGE_MANIFEST_FILENAME = "ftmoquant_session_coverage.json"
 COVERAGE_QA_VERSION = "g1-data-readiness-1"
 SESSION_POLICY_VERSION = "dukascopy-eurusd-ny-close-v1"
+GENERIC_SESSION_POLICY_VERSION = "dukascopy-fx-ny-close-v1"
 SESSION_TIMEZONE = "America/New_York"
 SESSION_POLICY_VALID_FROM_UTC = datetime(2019, 3, 10, 21, tzinfo=UTC)
 
@@ -158,6 +161,14 @@ def is_eurusd_expected_open(timestamp: datetime) -> bool:
     return local.timetz().replace(tzinfo=None) >= _NEW_YORK_CLOSE
 
 
+def is_fx_expected_open(timestamp: datetime, session_policy_id: str) -> bool:
+    """Apply the explicit shared FX weekly policy to a configured instrument."""
+
+    if session_policy_id != GENERIC_SESSION_POLICY_VERSION:
+        raise CoverageValidationError("unknown instrument session policy")
+    return is_eurusd_expected_open(timestamp)
+
+
 def assess_eurusd_source_coverage(
     start_utc: datetime,
     end_exclusive_utc: datetime,
@@ -185,12 +196,30 @@ def assess_eurusd_source_coverage(
 def run_eurusd_session_coverage_qa(output_root: Path) -> SessionCoverageResult:
     """Run and persist the bridge over existing G0.5 and G0.6 artifacts."""
 
+    return _run_session_coverage(output_root, EURUSD_SPEC, legacy=True)
+
+
+def run_instrument_session_coverage(
+    output_root: Path, instrument_spec: InstrumentSpec
+) -> SessionCoverageResult:
+    """Run session-aware QA for one configured FX instrument."""
+
+    return _run_session_coverage(output_root, instrument_spec, legacy=False)
+
+
+def _run_session_coverage(
+    output_root: Path, instrument_spec: InstrumentSpec, *, legacy: bool
+) -> SessionCoverageResult:
+    instrument_spec.validate()
+
     root = output_root.resolve()
     parent_path = root / PARENT_MANIFEST_FILENAME
     derived_path = root / DERIVED_MANIFEST_FILENAME
     catalog_path = root / "catalog"
     parent = _load_json_object(parent_path, "G0.5 source manifest")
-    parent_ingestion_version = _validate_parent_manifest(parent)
+    parent_ingestion_version = _validate_parent_manifest(
+        parent, instrument_spec=instrument_spec, legacy=legacy
+    )
     start, end = _requested_interval(parent)
     if not catalog_path.is_dir():
         raise CoverageValidationError(f"missing G0.5 catalog: {catalog_path}")
@@ -198,9 +227,10 @@ def run_eurusd_session_coverage_qa(output_root: Path) -> SessionCoverageResult:
     catalog = ParquetDataCatalog(str(catalog_path))
     accumulator = _CoverageAccumulator(start=start, end=end, next_minute=start)
     try:
-        chunks = iter_paired_eurusd_source_chunks(
+        chunks = iter_paired_source_chunks(
             catalog,
             parent,
+            instrument_spec,
             _datetime_ns(start),
             _datetime_ns(end),
             chunk_minutes=_SOURCE_QUERY_CHUNK_MINUTES,
@@ -223,7 +253,11 @@ def run_eurusd_session_coverage_qa(output_root: Path) -> SessionCoverageResult:
     parent_sha256 = _sha256(parent_path)
     derived = _load_json_object(derived_path, "G0.6 derived manifest")
     structural_valid = _derived_structure_valid(
-        derived, parent_sha256, source_counts, parent_ingestion_version
+        derived,
+        parent_sha256,
+        source_counts,
+        parent_ingestion_version,
+        instrument_spec.instrument_id,
     )
     payload = _coverage_manifest(
         assessment=assessment,
@@ -231,6 +265,8 @@ def run_eurusd_session_coverage_qa(output_root: Path) -> SessionCoverageResult:
         derived_sha256=_sha256(derived_path),
         structural_valid=structural_valid,
         parent_ingestion_version=parent_ingestion_version,
+        instrument_spec=instrument_spec,
+        legacy=legacy,
     )
     semantic_sha256 = _semantic_sha256(payload)
     manifest = {**payload, "semantic_sha256": semantic_sha256}
@@ -259,14 +295,20 @@ def _coverage_manifest(
     derived_sha256: str,
     structural_valid: bool,
     parent_ingestion_version: str = INGESTION_VERSION,
+    instrument_spec: InstrumentSpec = EURUSD_SPEC,
+    legacy: bool = True,
 ) -> dict[str, Any]:
     return {
         "coverage_qa_version": COVERAGE_QA_VERSION,
         "provider": "Dukascopy",
-        "instrument": "EUR/USD",
-        "instrument_id": INSTRUMENT_ID,
+        "instrument": (
+            f"{instrument_spec.base_currency}/{instrument_spec.quote_currency}"
+        ),
+        "instrument_id": instrument_spec.instrument_id,
         "session_policy": {
-            "version": SESSION_POLICY_VERSION,
+            "version": (
+                SESSION_POLICY_VERSION if legacy else instrument_spec.session_policy_id
+            ),
             "valid_from_utc": _format_utc(SESSION_POLICY_VALID_FROM_UTC),
             "timezone": SESSION_TIMEZONE,
             "timezone_semantics": (
@@ -340,9 +382,18 @@ def _coverage_manifest(
     }
 
 
-def _validate_parent_manifest(manifest: dict[str, Any]) -> str:
+def _validate_parent_manifest(
+    manifest: dict[str, Any],
+    *,
+    instrument_spec: InstrumentSpec = EURUSD_SPEC,
+    legacy: bool = True,
+) -> str:
     try:
-        identity = validate_canonical_eurusd_source_manifest(manifest)
+        identity = (
+            validate_canonical_eurusd_source_manifest(manifest)
+            if legacy
+            else validate_canonical_source_manifest(manifest, instrument_spec)
+        )
     except CanonicalSourceValidationError as error:
         raise CoverageValidationError(str(error)) from error
     return identity.ingestion_version
@@ -522,6 +573,7 @@ def _derived_structure_valid(
     parent_sha256: str,
     source_counts: dict[str, int],
     parent_ingestion_version: str = INGESTION_VERSION,
+    instrument_id: str = INSTRUMENT_ID,
 ) -> bool:
     expected = {
         "derivation_version": DERIVATION_VERSION,
@@ -529,7 +581,7 @@ def _derived_structure_valid(
         "parent_g0_5_manifest_sha256": parent_sha256,
         "parent_ingestion_version": parent_ingestion_version,
         "nautilus_version": NAUTILUS_VERSION,
-        "instrument_id": INSTRUMENT_ID,
+        "instrument_id": instrument_id,
     }
     for name, value in expected.items():
         if manifest.get(name) != value:

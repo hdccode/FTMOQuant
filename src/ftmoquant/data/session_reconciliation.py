@@ -7,6 +7,7 @@ import hashlib
 import json
 import lzma
 import math
+import re
 import struct
 import time
 import urllib.error
@@ -27,18 +28,26 @@ from tradedesk_dukascopy.export import (  # type: ignore[import-untyped]
 
 from ftmoquant.data.canonical_source import (
     CORRECTED_INGESTION_VERSION,
+    GENERIC_CORRECTED_INGESTION_VERSION,
     HF_INGESTION_VERSION,
     validate_canonical_eurusd_source_manifest,
+    validate_canonical_source_manifest,
 )
 from ftmoquant.data.derived_bars import PARENT_MANIFEST_FILENAME
 from ftmoquant.data.dukascopy import INSTRUMENT_ID, UPSTREAM_COMMIT, UPSTREAM_VERSION
-from ftmoquant.data.research_plan import ResearchDataPlan, load_research_data_plan
+from ftmoquant.data.instruments import EURUSD_SPEC, InstrumentSpec
+from ftmoquant.data.research_plan import (
+    ResearchDataPlan,
+    ResearchSplit,
+    load_research_data_plan,
+)
 from ftmoquant.data.session_coverage import (
     COVERAGE_MANIFEST_FILENAME,
     COVERAGE_QA_VERSION,
     SESSION_POLICY_VERSION,
     is_eurusd_expected_open,
 )
+from ftmoquant.data.universe_plan import load_research_universe_plan
 
 RECONCILIATION_MANIFEST_FILENAME = "ftmoquant_session_reconciliation.json"
 RECONCILIATION_VERSION = "g1-session-reconciliation-1"
@@ -153,6 +162,7 @@ class DirectDukascopyAcquirer:
         self,
         cache_root: Path,
         *,
+        symbol: str = "EURUSD",
         transport: Transport | None = None,
         retries: int = 3,
         retry_delay_seconds: float = 0.8,
@@ -162,6 +172,9 @@ class DirectDukascopyAcquirer:
         if retry_delay_seconds < 0:
             raise ValueError("retry_delay_seconds must not be negative")
         self.cache_root = cache_root.resolve()
+        if re.fullmatch(r"[A-Z]{6}", symbol) is None:
+            raise ValueError("symbol must be exactly six uppercase letters")
+        self.symbol = symbol
         self.transport = transport or _http_get
         self.retries = retries
         self.retry_delay_seconds = retry_delay_seconds
@@ -182,7 +195,7 @@ class DirectDukascopyAcquirer:
             raise ReconciliationValidationError(
                 "direct Dukascopy query would cross the sealed holdout boundary"
             )
-        source_url = _dukascopy_tick_url("EURUSD", hour)
+        source_url = _dukascopy_tick_url(self.symbol, hour)
         raw_path, meta_path = self._cache_paths(hour)
         if raw_path.exists() or meta_path.exists():
             return self._load_cache(hour, source_url, raw_path, meta_path)
@@ -200,7 +213,7 @@ class DirectDukascopyAcquirer:
                         hour,
                         source_url,
                         response.body,
-                        _relative_cache_path(hour),
+                        _relative_cache_path(hour, self.symbol),
                     )
                     self._write_cache(raw_path, meta_path, verification, response.body)
                     return verification
@@ -222,7 +235,7 @@ class DirectDukascopyAcquirer:
         )
 
     def _cache_paths(self, hour: datetime) -> tuple[Path, Path]:
-        relative = Path(_relative_cache_path(hour))
+        relative = Path(_relative_cache_path(hour, self.symbol))
         raw_path = self.cache_root / relative
         return raw_path, raw_path.with_suffix(".bi5.meta.json")
 
@@ -249,7 +262,7 @@ class DirectDukascopyAcquirer:
             if any(metadata.get(key) != value for key, value in expected.items()):
                 raise ReconciliationValidationError("BI5 cache metadata mismatch")
             verification = _verification_from_payload(
-                hour, source_url, payload, _relative_cache_path(hour)
+                hour, source_url, payload, _relative_cache_path(hour, self.symbol)
             )
             if metadata.get("tick_count") != verification.tick_count:
                 raise ReconciliationValidationError("BI5 cache tick count mismatch")
@@ -348,8 +361,118 @@ def run_eurusd_session_reconciliation(
     manifest_path = root / RECONCILIATION_MANIFEST_FILENAME
     if manifest_path.exists() and manifest_path.read_bytes() != manifest_bytes:
         raise ReconciliationValidationError(
-            "existing session reconciliation conflicts with this run: "
-            f"{manifest_path}"
+            f"existing session reconciliation conflicts with this run: {manifest_path}"
+        )
+    if not manifest_path.exists():
+        manifest_path.write_bytes(manifest_bytes)
+    return ReconciliationResult(
+        manifest_path=manifest_path,
+        session_aware_research_ready=cast(
+            bool, manifest["session_aware_research_ready"]
+        ),
+        semantic_sha256=semantic_sha256,
+        counts=cast(Mapping[str, int], manifest["counts"]),
+    )
+
+
+def run_instrument_reconciliation(
+    plan_path: Path,
+    instrument_id: str,
+    output_root: Path,
+    cache_root: Path,
+    *,
+    offline_evidence_path: Path | None = None,
+    workers: int = 4,
+    acquirer: DirectDukascopyAcquirer | None = None,
+) -> ReconciliationResult:
+    """Reconcile one universe member with symbol-specific direct BI5 evidence."""
+
+    if workers <= 0 or workers > 4:
+        raise ValueError("multi-instrument reconciliation workers must be in 1..4")
+    universe = load_research_universe_plan(plan_path)
+    instrument = universe.instrument(instrument_id)
+    plan = ResearchDataPlan(
+        dataset_id=universe.universe_id,
+        market_data_origin=universe.market_data_origin,
+        distribution_source=universe.distribution_source,
+        huggingface_repo=universe.huggingface_repo,
+        huggingface_revision=universe.huggingface_revision,
+        instrument=instrument.instrument_id,
+        full_start=universe.development.start,
+        full_end=universe.validation.end,
+        boundary_rule="explicit_whole_utc_days",
+        development=universe.development,
+        validation=universe.validation,
+        final_holdout=ResearchSplit(
+            start=universe.holdout_cutoff_utc.date(),
+            end=universe.holdout_cutoff_utc.date(),
+            days=1,
+        ),
+        g1_allowed_end_exclusive=universe.holdout_cutoff_utc,
+        semantic_sha256=universe.semantic_sha256,
+    )
+    root = output_root.resolve()
+    provenance_path = root / PARENT_MANIFEST_FILENAME
+    coverage_path = root / COVERAGE_MANIFEST_FILENAME
+    provenance = _load_json_object(provenance_path, "canonical provenance")
+    coverage = _load_json_object(coverage_path, "session coverage report")
+    missing = _validate_inputs(
+        plan,
+        plan_path,
+        provenance,
+        provenance_path,
+        coverage,
+        coverage_path,
+        instrument_spec=instrument,
+        session_policy_version=instrument.session_policy_id,
+        legacy=False,
+    )
+    offline_domains, offline_provenance = _load_offline_evidence(
+        offline_evidence_path, plan
+    )
+    required_hours = sorted(
+        {
+            _floor_hour(item.timestamp)
+            for item in missing
+            if item.missing_sides == _EXPECTED_MISSING_SIDES
+            and _offline_for_minute(item.timestamp, offline_domains) is None
+        }
+    )
+    verifier = acquirer or DirectDukascopyAcquirer(
+        cache_root, symbol=instrument.dataset_symbol
+    )
+    if verifier.symbol != instrument.dataset_symbol:
+        raise ReconciliationValidationError(
+            "BI5 acquirer symbol does not match instrument"
+        )
+    hour_results = _acquire_hours(
+        required_hours,
+        verifier,
+        plan.g1_allowed_end_exclusive,
+        workers,
+        symbol=instrument.dataset_symbol,
+    )
+    payload = build_reconciliation_payload(
+        plan=plan,
+        plan_file_sha256=_sha256(plan_path),
+        provenance=provenance,
+        provenance_file_sha256=_sha256(provenance_path),
+        coverage=coverage,
+        coverage_file_sha256=_sha256(coverage_path),
+        missing_minutes=missing,
+        offline_domains=offline_domains,
+        offline_provenance=offline_provenance,
+        hour_results=hour_results,
+        instrument_id=instrument.instrument_id,
+        symbol=instrument.dataset_symbol,
+    )
+    semantic_sha256 = _semantic_sha256(payload)
+    manifest = {**payload, "semantic_sha256": semantic_sha256}
+    manifest_bytes = (json.dumps(manifest, indent=2, sort_keys=True) + "\n").encode()
+    manifest_path = root / RECONCILIATION_MANIFEST_FILENAME
+    if manifest_path.exists() and manifest_path.read_bytes() != manifest_bytes:
+        raise ReconciliationValidationError(
+            f"existing session reconciliation conflicts with this run: {manifest_path}"
         )
     if not manifest_path.exists():
         manifest_path.write_bytes(manifest_bytes)
@@ -404,17 +527,11 @@ def acquire_eurusd_reconciliation_batch(
     )
     verifier = acquirer or DirectDukascopyAcquirer(cache_root)
     uncached = [
-        hour
-        for hour in required_hours
-        if not verifier.has_complete_cache_entry(hour)
+        hour for hour in required_hours if not verifier.has_complete_cache_entry(hour)
     ]
     selected = uncached[:max_uncached_hours]
-    results = _acquire_hours(
-        selected, verifier, plan.g1_allowed_end_exclusive, workers
-    )
-    verified = sum(
-        result.outcome == _OUTCOME_VERIFIED for result in results.values()
-    )
+    results = _acquire_hours(selected, verifier, plan.g1_allowed_end_exclusive, workers)
+    verified = sum(result.outcome == _OUTCOME_VERIFIED for result in results.values())
     return AcquisitionBatchResult(
         selected_hour_count=len(selected),
         verified_hour_count=verified,
@@ -428,6 +545,7 @@ def _acquire_hours(
     verifier: DirectDukascopyAcquirer,
     cutoff: datetime,
     workers: int,
+    symbol: str = "EURUSD",
 ) -> dict[datetime, HourVerification]:
     results: dict[datetime, HourVerification] = {}
     with ThreadPoolExecutor(max_workers=workers) as executor:
@@ -441,7 +559,7 @@ def _acquire_hours(
             except Exception:
                 result = _failed_verification(
                     hour,
-                    _dukascopy_tick_url("EURUSD", hour),
+                    _dukascopy_tick_url(symbol, hour),
                     "worker_failure",
                 )
             results[hour] = result
@@ -460,6 +578,8 @@ def build_reconciliation_payload(
     offline_domains: Sequence[OfflineDomain],
     offline_provenance: dict[str, Any],
     hour_results: Mapping[datetime, HourVerification],
+    instrument_id: str = INSTRUMENT_ID,
+    symbol: str = "EURUSD",
 ) -> dict[str, Any]:
     """Build the deterministic semantic payload from already validated inputs."""
 
@@ -470,7 +590,7 @@ def build_reconciliation_payload(
             raise ReconciliationValidationError(
                 "independent verification result crosses the holdout boundary"
             )
-        _validate_hour_result(result)
+        _validate_hour_result(result, symbol)
 
     decisions = tuple(
         _classify_minute(item, offline_domains, hour_results)
@@ -498,9 +618,7 @@ def build_reconciliation_payload(
     if sum(minute_counts.values()) != original_minutes:
         raise AssertionError("reconciliation classifications do not partition gaps")
     structural_valid = coverage.get("source_derived_structural_integrity_valid") is True
-    holdout_rows = cast(dict[str, Any], provenance["qa"]).get(
-        "holdout_rows_admitted"
-    )
+    holdout_rows = cast(dict[str, Any], provenance["qa"]).get("holdout_rows_admitted")
     ready = (
         structural_valid
         and minute_counts[_CLASS_UNEXPLAINED] == 0
@@ -512,7 +630,7 @@ def build_reconciliation_payload(
     )
     return {
         "reconciliation_version": RECONCILIATION_VERSION,
-        "instrument_id": INSTRUMENT_ID,
+        "instrument_id": instrument_id,
         "research_plan": {
             "file_sha256": plan_file_sha256,
             "semantic_sha256": plan.semantic_sha256,
@@ -540,7 +658,9 @@ def build_reconciliation_payload(
         "permitted_utc_interval": {
             "start_utc": datetime.combine(
                 plan.development.start, datetime.min.time(), tzinfo=UTC
-            ).isoformat().replace("+00:00", "Z"),
+            )
+            .isoformat()
+            .replace("+00:00", "Z"),
             "end_exclusive_utc": _format_utc(cutoff),
         },
         "classification_semantics": {
@@ -589,19 +709,11 @@ def build_reconciliation_payload(
         "counts": {
             "original_unexplained_interval_count": original_interval_count,
             "original_unexplained_minute_count": original_minutes,
-            "provider_offline_interval_count": interval_counts[
-                _CLASS_PROVIDER_OFFLINE
-            ],
+            "provider_offline_interval_count": interval_counts[_CLASS_PROVIDER_OFFLINE],
             "provider_offline_minute_count": minute_counts[_CLASS_PROVIDER_OFFLINE],
-            "verified_no_tick_interval_count": interval_counts[
-                _CLASS_VERIFIED_NO_TICK
-            ],
-            "verified_no_tick_minute_count": minute_counts[
-                _CLASS_VERIFIED_NO_TICK
-            ],
-            "unexplained_missing_interval_count": interval_counts[
-                _CLASS_UNEXPLAINED
-            ],
+            "verified_no_tick_interval_count": interval_counts[_CLASS_VERIFIED_NO_TICK],
+            "verified_no_tick_minute_count": minute_counts[_CLASS_VERIFIED_NO_TICK],
+            "unexplained_missing_interval_count": interval_counts[_CLASS_UNEXPLAINED],
             "unexplained_missing_minute_count": minute_counts[_CLASS_UNEXPLAINED],
         },
         "provider_offline_intervals_utc": [
@@ -633,15 +745,24 @@ def _validate_inputs(
     provenance_path: Path,
     coverage: dict[str, Any],
     coverage_path: Path,
+    *,
+    instrument_spec: InstrumentSpec = EURUSD_SPEC,
+    session_policy_version: str = SESSION_POLICY_VERSION,
+    legacy: bool = True,
 ) -> tuple[_MissingMinute, ...]:
     if version("tradedesk-dukascopy") != UPSTREAM_VERSION:
         raise ReconciliationValidationError(
             f"expected tradedesk-dukascopy {UPSTREAM_VERSION}"
         )
-    identity = validate_canonical_eurusd_source_manifest(provenance)
+    identity = (
+        validate_canonical_eurusd_source_manifest(provenance)
+        if legacy
+        else validate_canonical_source_manifest(provenance, instrument_spec)
+    )
     if identity.ingestion_version not in {
         HF_INGESTION_VERSION,
         CORRECTED_INGESTION_VERSION,
+        GENERIC_CORRECTED_INGESTION_VERSION,
     }:
         raise ReconciliationValidationError(
             "reconciliation requires the frozen or explicitly corrected G1 source"
@@ -675,9 +796,10 @@ def _validate_inputs(
     if coverage.get("coverage_qa_version") != COVERAGE_QA_VERSION:
         raise ReconciliationValidationError("session coverage version is incompatible")
     session_policy = coverage.get("session_policy")
-    if not isinstance(session_policy, dict) or session_policy.get(
-        "version"
-    ) != SESSION_POLICY_VERSION:
+    if (
+        not isinstance(session_policy, dict)
+        or session_policy.get("version") != session_policy_version
+    ):
         raise ReconciliationValidationError("session policy version is incompatible")
     if coverage.get("parent_g0_5_manifest_sha256") != _sha256(provenance_path):
         raise ReconciliationValidationError(
@@ -711,9 +833,7 @@ def _validate_inputs(
     requested_minutes = int(
         (
             plan.g1_allowed_end_exclusive
-            - datetime.combine(
-                plan.development.start, datetime.min.time(), tzinfo=UTC
-            )
+            - datetime.combine(plan.development.start, datetime.min.time(), tzinfo=UTC)
         )
         / _MINUTE
     )
@@ -815,9 +935,7 @@ def _load_offline_evidence(
         "requested_start_utc": _format_utc(
             datetime.combine(plan.development.start, datetime.min.time(), tzinfo=UTC)
         ),
-        "requested_end_exclusive_utc": _format_utc(
-            plan.g1_allowed_end_exclusive
-        ),
+        "requested_end_exclusive_utc": _format_utc(plan.g1_allowed_end_exclusive),
     }
     for field, value in expected.items():
         if document.get(field) != value:
@@ -844,9 +962,7 @@ def _load_offline_evidence(
             raise ReconciliationValidationError("offline domain must be an object")
         item = cast(dict[str, Any], raw)
         start = _parse_utc_minute(item.get("start_utc"), "offline domain start")
-        end = _parse_utc_minute(
-            item.get("end_exclusive_utc"), "offline domain end"
-        )
+        end = _parse_utc_minute(item.get("end_exclusive_utc"), "offline domain end")
         if end <= start or end > plan.g1_allowed_end_exclusive:
             raise ReconciliationValidationError(
                 "offline domain is empty or reaches beyond the permitted range"
@@ -1061,9 +1177,9 @@ def _verification_from_payload(
     )
 
 
-def _validate_hour_result(result: HourVerification) -> None:
+def _validate_hour_result(result: HourVerification, symbol: str = "EURUSD") -> None:
     hour = _require_utc_hour(result.hour_start_utc, "verification hour")
-    if result.source_url != _dukascopy_tick_url("EURUSD", hour):
+    if result.source_url != _dukascopy_tick_url(symbol, hour):
         raise ReconciliationValidationError("verification source URL mismatch")
     if result.outcome == _OUTCOME_VERIFIED:
         if (
@@ -1206,9 +1322,9 @@ def _floor_hour(value: datetime) -> datetime:
     return value.replace(minute=0, second=0, microsecond=0)
 
 
-def _relative_cache_path(hour: datetime) -> str:
+def _relative_cache_path(hour: datetime, symbol: str = "EURUSD") -> str:
     return (
-        f"EURUSD/{hour.year:04d}/{hour.month - 1:02d}/{hour.day:02d}/"
+        f"{symbol}/{hour.year:04d}/{hour.month - 1:02d}/{hour.day:02d}/"
         f"{hour.hour:02d}h_ticks.bi5"
     )
 

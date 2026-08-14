@@ -25,6 +25,13 @@ ftmoquant-derive-eurusd-bars = "ftmoquant.data.derived_bars:main"
 ftmoquant-qa-eurusd-coverage = "ftmoquant.data.session_coverage:main"
 ftmoquant-reconcile-eurusd-gaps = "ftmoquant.data.session_reconciliation:main"
 ftmoquant-correct-eurusd = "ftmoquant.data.canonical_correction:main"
+ftmoquant-ingest-hf-instrument = "ftmoquant.data.g1_4_cli:ingest_main"
+ftmoquant-derive-instrument-bars = "ftmoquant.data.g1_4_cli:derive_main"
+ftmoquant-qa-instrument-coverage = "ftmoquant.data.g1_4_cli:coverage_main"
+ftmoquant-reconcile-instrument-gaps = "ftmoquant.data.g1_4_cli:reconcile_main"
+ftmoquant-materialize-instrument-splits = "ftmoquant.data.g1_4_cli:split_main"
+ftmoquant-freeze-instrument-readiness = "ftmoquant.data.g1_4_cli:freeze_instrument_main"
+ftmoquant-freeze-universe-readiness = "ftmoquant.data.g1_4_cli:freeze_universe_main"
 
 [dependency-groups]
 dev = [

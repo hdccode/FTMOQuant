@@ -9,6 +9,7 @@ from nautilus_trader.common import Cache, Clock, TimeEvent
 from nautilus_trader.model import (
     Bar,
     Currency,
+    CurrencyPair,
     InstrumentId,
     OrderFilled,
     Position,
@@ -65,7 +66,7 @@ class LiquidationValuation:
 
 
 class PairedBarLiquidationSnapshotSource:
-    """Mark EUR/USD positions at liquidation-side completed bar closes.
+    """Mark quote-USD FX positions at liquidation-side completed bar closes.
 
     Native account balance contains fees, realized P/L, and rollover. Open
     position P/L is calculated ephemerally by native ``Position.unrealized_pnl``.
@@ -80,8 +81,14 @@ class PairedBarLiquidationSnapshotSource:
         instrument_id: InstrumentId,
         account_currency: Currency,
     ) -> None:
-        if instrument_id.value != "EUR/USD.DUKASCOPY":
-            raise ValueError("G0.9 liquidation valuation supports EUR/USD only")
+        instrument = cache.instrument(instrument_id)
+        if (
+            not isinstance(instrument, CurrencyPair)
+            or instrument.quote_currency.code != "USD"
+        ):
+            raise ValueError(
+                "liquidation valuation supports configured quote-USD CurrencyPair only"
+            )
         if account_currency.code != "USD":
             raise ValueError("G0.9 liquidation valuation requires a USD account")
         self._cache = cache
@@ -153,7 +160,7 @@ class PairedBarLiquidationSnapshotSource:
             )
         if self._bid_close is None or self._ask_close is None:
             raise RuntimeError(
-                "open EUR/USD positions require a completed BID/ASK mark pair"
+                "open quote-USD positions require a completed BID/ASK mark pair"
             )
         equity = native.balance
         for position in positions:
@@ -329,18 +336,14 @@ class NautilusFtmoBridge:
                     valuation.native_portfolio_equity - snapshot.equity
                 ),
                 open_position_ids=tuple(sorted(snapshot.open_position_ids)),
-                completed_mark_timestamp_ns=(
-                    valuation.completed_mark_timestamp_ns
-                ),
+                completed_mark_timestamp_ns=(valuation.completed_mark_timestamp_ns),
                 bid_close=(
                     None if valuation.bid_close is None else str(valuation.bid_close)
                 ),
                 ask_close=(
                     None if valuation.ask_close is None else str(valuation.ask_close)
                 ),
-                deferred_order_fill_timestamps_ns=(
-                    deferred_order_fill_timestamps_ns
-                ),
+                deferred_order_fill_timestamps_ns=(deferred_order_fill_timestamps_ns),
                 deferred_position_opened_timestamps_ns=(
                     deferred_position_opened_timestamps_ns
                 ),

@@ -29,10 +29,12 @@ from nautilus_trader.persistence import ParquetDataCatalog
 
 from ftmoquant.data.canonical_source import (
     CanonicalSourceValidationError,
-    iter_paired_eurusd_source_chunks,
+    iter_paired_source_chunks,
     validate_canonical_eurusd_source_manifest,
+    validate_canonical_source_manifest,
 )
 from ftmoquant.data.dukascopy import INSTRUMENT_ID, NAUTILUS_VERSION
+from ftmoquant.data.instruments import EURUSD_SPEC, InstrumentSpec
 
 DERIVATION_VERSION = "g0.6-1"
 CONFIG_VERSION = 1
@@ -82,6 +84,7 @@ class _SeriesAccumulator:
     """Only cross-query state needed for one aligned derived series."""
 
     side: str
+    instrument_id: str
     hours: int
     expected_minutes: int
     range_end_ns: int
@@ -124,33 +127,55 @@ class _BarCollector(DataActor):
 def derive_eurusd_bars(output_root: Path) -> DerivationResult:
     """Derive complete UTC 1H/4H bars from a trusted canonical 1m catalog."""
 
+    return derive_instrument_bars(output_root, EURUSD_SPEC)
+
+
+def derive_instrument_bars(
+    output_root: Path, instrument_spec: InstrumentSpec
+) -> DerivationResult:
+    """Derive native complete-window bars for one configured instrument."""
+
+    instrument_spec.validate()
+
     root = output_root.resolve()
     parent_manifest_path = root / PARENT_MANIFEST_FILENAME
     catalog_path = root / "catalog"
     _validate_runtime(parent_manifest_path, catalog_path)
-    parent_manifest = _load_parent_manifest(parent_manifest_path)
+    parent_manifest = _load_parent_manifest(
+        parent_manifest_path, instrument_spec=instrument_spec
+    )
     parent_sha256 = _sha256(parent_manifest_path)
     requested_start_ns, requested_end_ns = _requested_range_ns(parent_manifest)
 
     catalog = ParquetDataCatalog(str(catalog_path))
-    instruments = catalog.instruments([INSTRUMENT_ID])
+    instruments = catalog.instruments([instrument_spec.instrument_id])
     if len(instruments) != 1 or not isinstance(instruments[0], CurrencyPair):
         raise DerivationValidationError(
-            f"catalog must contain exactly one CurrencyPair for {INSTRUMENT_ID}"
+            "catalog must contain exactly one CurrencyPair for "
+            f"{instrument_spec.instrument_id}"
         )
     instrument = instruments[0]
 
     manifest_path = root / DERIVED_MANIFEST_FILENAME
-    write_outputs = _preflight_output_mode(catalog, manifest_path)
+    write_outputs = _preflight_output_mode(
+        catalog, manifest_path, instrument_spec.instrument_id
+    )
     _validate_streaming_source(
-        catalog, parent_manifest, requested_start_ns, requested_end_ns
+        catalog,
+        parent_manifest,
+        requested_start_ns,
+        requested_end_ns,
+        instrument_spec,
     )
 
-    accumulators = _series_accumulators(requested_start_ns, requested_end_ns)
+    accumulators = _series_accumulators(
+        requested_start_ns, requested_end_ns, instrument_spec.instrument_id
+    )
     try:
-        chunks = iter_paired_eurusd_source_chunks(
+        chunks = iter_paired_source_chunks(
             catalog,
             parent_manifest,
+            instrument_spec,
             requested_start_ns,
             requested_end_ns,
             chunk_minutes=_SOURCE_QUERY_CHUNK_MINUTES,
@@ -172,7 +197,7 @@ def derive_eurusd_bars(output_root: Path) -> DerivationResult:
     )
     series = [_series_result(item) for item in accumulators.values()]
 
-    _validate_bid_ask_coverage(series)
+    _validate_bid_ask_coverage(series, instrument_spec.instrument_id)
     coverage_status, research_ready, readiness_reasons = _research_readiness(series)
     manifest = _derived_manifest(
         parent_sha256,
@@ -183,6 +208,7 @@ def derive_eurusd_bars(output_root: Path) -> DerivationResult:
         coverage_status,
         research_ready,
         readiness_reasons,
+        instrument_spec.instrument_id,
     )
     manifest_bytes = (json.dumps(manifest, indent=2, sort_keys=True) + "\n").encode()
     _validate_stored_outputs(catalog, series, requested_start_ns, requested_end_ns)
@@ -216,7 +242,9 @@ def _validate_runtime(parent_manifest_path: Path, catalog_path: Path) -> None:
         raise DerivationValidationError(f"missing G0.5 catalog: {catalog_path}")
 
 
-def _load_parent_manifest(path: Path) -> dict[str, Any]:
+def _load_parent_manifest(
+    path: Path, *, instrument_spec: InstrumentSpec = EURUSD_SPEC
+) -> dict[str, Any]:
     try:
         value = json.loads(path.read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError) as error:
@@ -227,7 +255,10 @@ def _load_parent_manifest(path: Path) -> dict[str, Any]:
         raise DerivationValidationError("G0.5 parent manifest must be an object")
     manifest = cast(dict[str, Any], value)
     try:
-        validate_canonical_eurusd_source_manifest(manifest)
+        if instrument_spec == EURUSD_SPEC:
+            validate_canonical_eurusd_source_manifest(manifest)
+        else:
+            validate_canonical_source_manifest(manifest, instrument_spec)
     except CanonicalSourceValidationError as error:
         raise DerivationValidationError(str(error)) from error
     return manifest
@@ -256,14 +287,20 @@ def _requested_range_ns(manifest: dict[str, Any]) -> tuple[int, int]:
     return int(start.timestamp() * 1_000_000_000), int(end.timestamp() * 1_000_000_000)
 
 
-def _preflight_output_mode(catalog: ParquetDataCatalog, manifest_path: Path) -> bool:
+def _preflight_output_mode(
+    catalog: ParquetDataCatalog,
+    manifest_path: Path,
+    instrument_id: str = INSTRUMENT_ID,
+) -> bool:
     """Return whether output is new, rejecting orphaned derived catalog data."""
 
     target_files = [
         path
         for hours, _ in _TARGETS
         for side in _SIDES
-        for path in catalog.query_files("bars", [_target_bar_type(hours, side)])
+        for path in catalog.query_files(
+            "bars", [_target_bar_type(hours, side, instrument_id)]
+        )
     ]
     if target_files and not manifest_path.exists():
         raise DerivationValidationError(
@@ -277,13 +314,15 @@ def _validate_streaming_source(
     parent_manifest: dict[str, Any],
     start_ns: int,
     end_ns: int,
+    instrument_spec: InstrumentSpec = EURUSD_SPEC,
 ) -> None:
     """Complete a read-only paired validation pass before derived writes."""
 
     try:
-        for _ in iter_paired_eurusd_source_chunks(
+        for _ in iter_paired_source_chunks(
             catalog,
             parent_manifest,
+            instrument_spec,
             start_ns,
             end_ns,
             chunk_minutes=_SOURCE_QUERY_CHUNK_MINUTES,
@@ -294,7 +333,7 @@ def _validate_streaming_source(
 
 
 def _series_accumulators(
-    start_ns: int, end_ns: int
+    start_ns: int, end_ns: int, instrument_id: str = INSTRUMENT_ID
 ) -> dict[tuple[int, str], _SeriesAccumulator]:
     accumulators: dict[tuple[int, str], _SeriesAccumulator] = {}
     for hours, expected_minutes in _TARGETS:
@@ -306,6 +345,7 @@ def _series_accumulators(
         for side in _SIDES:
             accumulators[(hours, side)] = _SeriesAccumulator(
                 side=side,
+                instrument_id=instrument_id,
                 hours=hours,
                 expected_minutes=expected_minutes,
                 range_end_ns=end_ns,
@@ -384,17 +424,27 @@ def _flush_eligible_pending(
             ("BID", bid_source, bid_state),
             ("ASK", ask_source, ask_state),
         ):
-            emitted, callbacks = _aggregate_native(
-                instrument=instrument,
-                source_bars=source_bars,
-                side=side,
-                hours=hours,
-            )
+            if state.instrument_id == INSTRUMENT_ID:
+                emitted, callbacks = _aggregate_native(
+                    instrument=instrument,
+                    source_bars=source_bars,
+                    side=side,
+                    hours=hours,
+                )
+            else:
+                emitted, callbacks = _aggregate_native(
+                    instrument=instrument,
+                    source_bars=source_bars,
+                    side=side,
+                    hours=hours,
+                    instrument_id=state.instrument_id,
+                )
             _validate_native_output(
                 emitted=emitted,
                 callback_timestamps_ns=callbacks,
                 source_bars=source_bars,
                 hours=hours,
+                instrument_id=state.instrument_id,
             )
             for bar in emitted:
                 _update_bar_digest(state.content_digest, bar)
@@ -414,9 +464,13 @@ def _flush_eligible_pending(
 
 def _series_result(accumulator: _SeriesAccumulator) -> SeriesResult:
     return SeriesResult(
-        source_bar_type=_source_bar_type(accumulator.side),
-        composite_bar_type=_composite_bar_type(accumulator.hours, accumulator.side),
-        target_bar_type=_target_bar_type(accumulator.hours, accumulator.side),
+        source_bar_type=_source_bar_type(accumulator.side, accumulator.instrument_id),
+        composite_bar_type=_composite_bar_type(
+            accumulator.hours, accumulator.side, accumulator.instrument_id
+        ),
+        target_bar_type=_target_bar_type(
+            accumulator.hours, accumulator.side, accumulator.instrument_id
+        ),
         source_bar_count=accumulator.source_bar_count,
         eligible_source_bar_count=accumulator.eligible_source_bar_count,
         emitted_bar_count=accumulator.emitted_bar_count,
@@ -542,10 +596,11 @@ def _aggregate_native(
     source_bars: Sequence[Bar],
     side: str,
     hours: int,
+    instrument_id: str = INSTRUMENT_ID,
 ) -> tuple[tuple[Bar, ...], tuple[int, ...]]:
     if not source_bars:
         return (), ()
-    composite = BarType.from_str(_composite_bar_type(hours, side))
+    composite = BarType.from_str(_composite_bar_type(hours, side, instrument_id))
     collector = _BarCollector(composite)
     logger = LoggerConfig(
         stdout_level=LogLevel.OFF,
@@ -613,6 +668,7 @@ def _validate_native_output(
     callback_timestamps_ns: Sequence[int],
     source_bars: Sequence[Bar],
     hours: int,
+    instrument_id: str = INSTRUMENT_ID,
 ) -> None:
     interval_ns = hours * 60 * _MINUTE_NS
     if len(emitted) != len(source_bars) // (hours * 60):
@@ -624,8 +680,8 @@ def _validate_native_output(
     source_by_close = {bar.ts_init: bar for bar in source_bars}
     for bar, callback_ns in zip(emitted, callback_timestamps_ns, strict=True):
         if str(bar.bar_type) not in {
-            _target_bar_type(hours, "BID"),
-            _target_bar_type(hours, "ASK"),
+            _target_bar_type(hours, "BID", instrument_id),
+            _target_bar_type(hours, "ASK", instrument_id),
         }:
             raise DerivationValidationError(
                 "Nautilus emitted the wrong target bar type"
@@ -645,7 +701,9 @@ def _validate_native_output(
             )
 
 
-def _validate_bid_ask_coverage(series: Sequence[SeriesResult]) -> None:
+def _validate_bid_ask_coverage(
+    series: Sequence[SeriesResult], instrument_id: str = INSTRUMENT_ID
+) -> None:
     for hours, _ in _TARGETS:
         by_side = {
             item.target_bar_type.split("-")[-2]: (
@@ -653,7 +711,7 @@ def _validate_bid_ask_coverage(series: Sequence[SeriesResult]) -> None:
                 item.coverage_sha256,
             )
             for item in series
-            if item.target_bar_type.startswith(f"{INSTRUMENT_ID}-{hours}-HOUR")
+            if item.target_bar_type.startswith(f"{instrument_id}-{hours}-HOUR")
         }
         if by_side.get("BID") != by_side.get("ASK"):
             raise DerivationValidationError(
@@ -707,6 +765,7 @@ def _derived_manifest(
     coverage_status: str,
     research_ready: bool,
     readiness_reasons: Sequence[str],
+    instrument_id: str = INSTRUMENT_ID,
 ) -> dict[str, Any]:
     series_manifest: dict[str, Any] = {}
     emitted_counts: dict[str, dict[str, int]] = {"1H": {}, "4H": {}}
@@ -742,7 +801,7 @@ def _derived_manifest(
         "parent_g0_5_manifest_sha256": parent_sha256,
         "parent_ingestion_version": parent_manifest["ingestion_version"],
         "nautilus_version": NAUTILUS_VERSION,
-        "instrument_id": INSTRUMENT_ID,
+        "instrument_id": instrument_id,
         "catalog_location": catalog_path.relative_to(root).as_posix(),
         "counts": {
             "source_1_minute": {
@@ -823,16 +882,18 @@ def _update_bar_digest(digest: Any, bar: Bar) -> None:
     )
 
 
-def _source_bar_type(side: str) -> str:
-    return f"{INSTRUMENT_ID}-1-MINUTE-{side}-EXTERNAL"
+def _source_bar_type(side: str, instrument_id: str = INSTRUMENT_ID) -> str:
+    return f"{instrument_id}-1-MINUTE-{side}-EXTERNAL"
 
 
-def _composite_bar_type(hours: int, side: str) -> str:
-    return f"{INSTRUMENT_ID}-{hours}-HOUR-{side}-INTERNAL@1-MINUTE-EXTERNAL"
+def _composite_bar_type(
+    hours: int, side: str, instrument_id: str = INSTRUMENT_ID
+) -> str:
+    return f"{instrument_id}-{hours}-HOUR-{side}-INTERNAL@1-MINUTE-EXTERNAL"
 
 
-def _target_bar_type(hours: int, side: str) -> str:
-    return f"{INSTRUMENT_ID}-{hours}-HOUR-{side}-INTERNAL"
+def _target_bar_type(hours: int, side: str, instrument_id: str = INSTRUMENT_ID) -> str:
+    return f"{instrument_id}-{hours}-HOUR-{side}-INTERNAL"
 
 
 def _iso_ns(timestamp_ns: int) -> str:

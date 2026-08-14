@@ -8,6 +8,7 @@ import json
 import math
 import re
 from collections.abc import Callable, Sequence
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import asdict, dataclass
 from datetime import UTC, date, datetime, timedelta
 from decimal import Decimal
@@ -20,6 +21,10 @@ import pyarrow.parquet as pq  # type: ignore[import-untyped]
 from huggingface_hub import HfApi, hf_hub_download
 from nautilus_trader.model import Bar
 from nautilus_trader.persistence import ParquetDataCatalog
+from tradedesk_dukascopy.export import (  # type: ignore[import-untyped]
+    _decode_ticks,
+    _probe_price_format,
+)
 
 from ftmoquant.data.canonical_source import HF_INGESTION_VERSION
 from ftmoquant.data.dukascopy import (
@@ -34,10 +39,16 @@ from ftmoquant.data.dukascopy import (
     _sha256,
     _to_nautilus_bars,
 )
+from ftmoquant.data.instruments import EURUSD_SPEC, InstrumentSpec, to_nautilus_bars
 from ftmoquant.data.research_plan import (
     HF_REVISION_PATTERN,
     ResearchDataPlan,
     load_research_data_plan,
+)
+from ftmoquant.data.session_reconciliation import DirectDukascopyAcquirer
+from ftmoquant.data.universe_plan import (
+    ResearchUniversePlan,
+    load_research_universe_plan,
 )
 
 HF_REPO_TYPE = "dataset"
@@ -129,6 +140,34 @@ class HfIngestionResult:
     semantic_sha256: str
 
 
+@dataclass(frozen=True, slots=True)
+class DirectSourceSegment:
+    """Prevalidated direct-source tail supplied to the hybrid importer."""
+
+    start_utc: datetime
+    end_exclusive_utc: datetime
+    bid_bars: tuple[SourceBar, ...]
+    ask_bars: tuple[SourceBar, ...]
+    admitted_tick_count: int
+    evidence_sha256: str
+    source_urls: tuple[str, ...]
+
+
+@dataclass(frozen=True, slots=True)
+class InstrumentInventoryReport:
+    """Metadata-only source availability report; no shard is downloaded."""
+
+    instrument_id: str
+    dataset_symbol: str
+    dataset_revision: str
+    shard_count: int
+    selected_safe_shard_count: int
+    total_source_bytes: int | None
+    selected_safe_bytes: int | None
+    direct_tail_required: bool
+    last_safe_date_inclusive: date
+
+
 @dataclass(slots=True)
 class _MinuteAggregate:
     minute_ms: int
@@ -195,6 +234,7 @@ class _StreamState:
     bar_count: int
     next_expected_minute: datetime
     missing_intervals: list[MissingInterval]
+    instrument: InstrumentSpec = EURUSD_SPEC
 
 
 def resolve_current_dataset_revision(api: HfApi | None = None) -> str:
@@ -220,6 +260,37 @@ def discover_source_file_plan(
 ) -> tuple[SourceFilePlan, ...]:
     """Validate the EUR/USD inventory and select only overlapping shards."""
 
+    return discover_instrument_source_plan(
+        EURUSD_SPEC,
+        repo_files,
+        revision,
+        requested_start,
+        requested_end_exclusive,
+        metadata=metadata,
+        split_boundaries=split_boundaries,
+    )
+
+
+def discover_instrument_source_plan(
+    instrument: InstrumentSpec,
+    repo_files: Sequence[str],
+    revision: str,
+    requested_start: datetime,
+    requested_end_exclusive: datetime,
+    *,
+    metadata: dict[str, RemoteFileMetadata] | None = None,
+    split_boundaries: Sequence[date] = (date(2023, 4, 11), date(2024, 8, 21)),
+    reject_straddling_end: bool = False,
+) -> tuple[SourceFilePlan, ...]:
+    """Validate one symbol inventory and select immutable overlapping shards.
+
+    ``reject_straddling_end`` is the holdout-safe mode: a physical shard whose
+    inclusive filename range reaches the requested half-open end is not admitted.
+    The uncovered tail must then come from an explicit direct-source segment.
+    """
+
+    instrument.validate()
+
     if HF_REVISION_PATTERN.fullmatch(revision) is None:
         raise HfDukascopyValidationError(
             "an exact pinned dataset revision is mandatory"
@@ -228,43 +299,57 @@ def discover_source_file_plan(
     end = _require_utc_minute(requested_end_exclusive, "requested_end_exclusive")
     if end <= start:
         raise HfDukascopyValidationError("requested interval must be non-empty")
+    source_directory = f"data/{instrument.dataset_symbol}/"
+    shard_pattern = re.compile(
+        rf"data/{instrument.dataset_symbol}/(?P<start>\d{{4}}-\d{{2}}-\d{{2}})_"
+        r"(?P<end>\d{4}-\d{2}-\d{2})\.parquet"
+    )
     parsed: list[tuple[date, date, str]] = []
     for path in repo_files:
-        if not path.startswith(SOURCE_DIRECTORY):
+        if not path.startswith(source_directory):
             continue
-        match = _SHARD_PATTERN.fullmatch(path)
+        match = shard_pattern.fullmatch(path)
         if match is None:
-            raise HfDukascopyValidationError(f"malformed EURUSD shard name: {path}")
+            raise HfDukascopyValidationError(
+                f"malformed {instrument.dataset_symbol} shard name: {path}"
+            )
         try:
             file_start = date.fromisoformat(match.group("start"))
             file_end = date.fromisoformat(match.group("end"))
         except ValueError as error:
             raise HfDukascopyValidationError(
-                f"malformed EURUSD shard dates: {path}"
+                f"malformed {instrument.dataset_symbol} shard dates: {path}"
             ) from error
         if file_end < file_start:
-            raise HfDukascopyValidationError(f"reversed EURUSD shard range: {path}")
+            raise HfDukascopyValidationError(
+                f"reversed {instrument.dataset_symbol} shard range: {path}"
+            )
         parsed.append((file_start, file_end, path))
     if not parsed:
-        raise HfDukascopyValidationError("pinned repository contains no EURUSD shards")
+        raise HfDukascopyValidationError(
+            f"pinned repository contains no {instrument.dataset_symbol} shards"
+        )
     parsed.sort()
     seen_ranges: set[tuple[date, date]] = set()
     previous_end: date | None = None
     for file_start, file_end, path in parsed:
         key = (file_start, file_end)
         if key in seen_ranges:
-            raise HfDukascopyValidationError(f"duplicate EURUSD shard range: {path}")
+            raise HfDukascopyValidationError(
+                f"duplicate {instrument.dataset_symbol} shard range: {path}"
+            )
         seen_ranges.add(key)
         if previous_end is not None:
             if file_start <= previous_end:
                 raise HfDukascopyValidationError(
-                    f"overlapping EURUSD shard inventory at {path}"
+                    f"overlapping {instrument.dataset_symbol} shard inventory at {path}"
                 )
             if file_start != previous_end + timedelta(days=1):
                 gap_start = previous_end + timedelta(days=1)
                 gap_end = file_start - timedelta(days=1)
                 raise HfDukascopyValidationError(
-                    "unexplained date gap in EURUSD shard inventory: "
+                    "unexplained date gap in "
+                    f"{instrument.dataset_symbol} shard inventory: "
                     f"{gap_start}..{gap_end}"
                 )
         previous_end = file_end
@@ -278,6 +363,8 @@ def discover_source_file_plan(
         )
         overlaps = file_start_utc < end and file_end_exclusive > start
         if not overlaps:
+            continue
+        if reject_straddling_end and file_start_utc < end < file_end_exclusive:
             continue
         details = remote.get(path, RemoteFileMetadata(None, None))
         selected.append(
@@ -296,13 +383,16 @@ def discover_source_file_plan(
         )
     if not selected:
         raise HfDukascopyValidationError(
-            "EURUSD inventory does not cover the requested interval"
+            f"{instrument.dataset_symbol} inventory does not cover the "
+            "requested interval"
         )
+    incomplete_end = selected[-1].filename_end_date < (end - _MILLISECOND).date()
     if selected[0].filename_start_date > start.date() or (
-        selected[-1].filename_end_date < (end - _MILLISECOND).date()
+        incomplete_end and not reject_straddling_end
     ):
         raise HfDukascopyValidationError(
-            "EURUSD shard inventory does not span the requested interval"
+            f"{instrument.dataset_symbol} shard inventory does not span the "
+            "requested interval"
         )
     return tuple(selected)
 
@@ -356,6 +446,7 @@ def ingest_hf_eurusd(
     catalog.write_instruments([_eurusd_instrument()])
     state = _StreamState(
         catalog=catalog,
+        instrument=EURUSD_SPEC,
         current=None,
         previous_tick_ms=None,
         previous_file_last_ms=None,
@@ -430,6 +521,484 @@ def ingest_hf_eurusd(
         missing_intervals=missing,
         semantic_sha256=semantic_sha256,
     )
+
+
+def ingest_hf_instrument(
+    plan_path: Path,
+    instrument_id: str,
+    output_root: Path,
+    *,
+    requested_start: datetime | None = None,
+    requested_end_exclusive: datetime | None = None,
+    direct_tail: DirectSourceSegment | None = None,
+    direct_cache_root: Path | None = None,
+    data_use_rights_evidence_sha256: str | None = None,
+    cache_dir: Path | None = None,
+    api: HfApi | None = None,
+    downloader: Callable[..., str] = hf_hub_download,
+    batch_size: int = 65_536,
+    on_admitted_batch: Callable[[pa.RecordBatch], None] | None = None,
+) -> HfIngestionResult:
+    """Ingest one universe member using a holdout-safe HF/direct source chain."""
+
+    plan = load_research_universe_plan(plan_path)
+    instrument = plan.instrument(instrument_id)
+    if (
+        data_use_rights_evidence_sha256 is None
+        or re.fullmatch(r"[0-9a-f]{64}", data_use_rights_evidence_sha256) is None
+    ):
+        raise HfDukascopyValidationError(
+            "acquisition is blocked until immutable data-use-rights "
+            "evidence is supplied"
+        )
+    start = _require_utc_minute(
+        requested_start or plan.permitted_start_utc, "requested_start"
+    )
+    end = _require_utc_minute(
+        requested_end_exclusive or plan.permitted_end_exclusive_utc,
+        "requested_end_exclusive",
+    )
+    if (
+        start < plan.permitted_start_utc
+        or end > plan.holdout_cutoff_utc
+        or end <= start
+    ):
+        raise HfDukascopyValidationError(
+            "instrument request falls outside the permitted pre-holdout interval"
+        )
+    if batch_size <= 0:
+        raise ValueError("batch_size must be positive")
+    root = output_root.resolve()
+    _reject_git_worktree_root(root)
+    manifest_path = root / MANIFEST_FILENAME
+    catalog_path = root / "catalog"
+    if manifest_path.exists() or catalog_path.exists():
+        raise HfDukascopyValidationError(
+            "output root already contains canonical ingestion artifacts"
+        )
+    root.mkdir(parents=True, exist_ok=True)
+
+    hub = api or HfApi()
+    repo_files, remote_metadata = _pinned_universe_inventory(hub, plan)
+    files = discover_instrument_source_plan(
+        instrument,
+        repo_files,
+        plan.huggingface_revision,
+        start,
+        end,
+        metadata=remote_metadata,
+        split_boundaries=(plan.validation.start, plan.holdout_cutoff_utc.date()),
+        reject_straddling_end=end == plan.holdout_cutoff_utc,
+    )
+    hf_end = min(
+        end,
+        datetime.combine(
+            files[-1].filename_end_date + timedelta(days=1),
+            datetime.min.time(),
+            tzinfo=UTC,
+        ),
+    )
+    if hf_end < end:
+        if direct_tail is None and direct_cache_root is not None:
+            direct_tail = acquire_direct_cutoff_segment(
+                instrument, hf_end, end, direct_cache_root
+            )
+        _validate_direct_tail(direct_tail, hf_end, end, plan, instrument)
+    elif direct_tail is not None or direct_cache_root is not None:
+        raise HfDukascopyValidationError(
+            "direct tail is forbidden when HF fully spans the requested interval"
+        )
+
+    catalog_path.mkdir(parents=True)
+    catalog = ParquetDataCatalog(str(catalog_path))
+    catalog.write_instruments([instrument.nautilus_instrument()])
+    state = _StreamState(
+        catalog=catalog,
+        instrument=instrument,
+        current=None,
+        previous_tick_ms=None,
+        previous_file_last_ms=None,
+        last_emitted_minute_ms=None,
+        bid_pending=[],
+        ask_pending=[],
+        bar_count=0,
+        next_expected_minute=start,
+        missing_intervals=[],
+    )
+    source_results: list[SourceFileResult] = []
+    total_ticks = 0
+    for source in files:
+        local = Path(
+            downloader(
+                repo_id=plan.huggingface_repo,
+                filename=source.repo_path,
+                repo_type=HF_REPO_TYPE,
+                revision=plan.huggingface_revision,
+                cache_dir=str(cache_dir) if cache_dir is not None else None,
+            )
+        )
+        result = _process_source_file(
+            local,
+            source,
+            start,
+            hf_end,
+            state,
+            batch_size=batch_size,
+            on_admitted_batch=on_admitted_batch,
+        )
+        source_results.append(result)
+        total_ticks += result.admitted_tick_count
+    if state.current is not None:
+        _emit_current(state)
+        state.current = None
+    if direct_tail is not None:
+        for bid, ask in zip(direct_tail.bid_bars, direct_tail.ask_bars, strict=True):
+            _emit_direct_pair(state, bid, ask, end)
+        total_ticks += direct_tail.admitted_tick_count
+    _write_pending(state)
+    if state.bar_count <= 0 or total_ticks <= 0:
+        raise HfDukascopyValidationError("source chain emitted no canonical data")
+    _prove_catalog_bounds(catalog, instrument, start, end, state.bar_count)
+    if state.next_expected_minute < end:
+        state.missing_intervals.append(
+            _missing_range(state.next_expected_minute, end - _ONE_MINUTE)
+        )
+
+    missing = tuple(state.missing_intervals)
+    payload = _instrument_manifest_payload(
+        plan=plan,
+        instrument=instrument,
+        start=start,
+        end=end,
+        root=root,
+        catalog_path=catalog_path,
+        source_results=source_results,
+        direct_tail=direct_tail,
+        admitted_tick_count=total_ticks,
+        bar_count=state.bar_count,
+        missing=missing,
+        data_use_rights_evidence_sha256=data_use_rights_evidence_sha256,
+    )
+    semantic_sha256 = _semantic_sha256(payload)
+    manifest_path.write_text(
+        json.dumps(
+            {**payload, "semantic_sha256": semantic_sha256}, indent=2, sort_keys=True
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    return HfIngestionResult(
+        manifest_path=manifest_path,
+        catalog_path=catalog_path,
+        dataset_revision=plan.huggingface_revision,
+        dataset_plan_sha256=plan.semantic_sha256,
+        admitted_tick_count=total_ticks,
+        bid_bar_count=state.bar_count,
+        ask_bar_count=state.bar_count,
+        missing_intervals=missing,
+        semantic_sha256=semantic_sha256,
+    )
+
+
+def acquire_direct_cutoff_segment(
+    instrument: InstrumentSpec,
+    start_utc: datetime,
+    end_exclusive_utc: datetime,
+    cache_root: Path,
+    *,
+    workers: int = 4,
+    acquirer: DirectDukascopyAcquirer | None = None,
+) -> DirectSourceSegment:
+    """Acquire and aggregate a bounded direct BI5 tail without synthetic bars."""
+
+    instrument.validate()
+    start = _require_utc_minute(start_utc, "direct_start_utc")
+    end = _require_utc_minute(end_exclusive_utc, "direct_end_exclusive_utc")
+    if end <= start:
+        raise HfDukascopyValidationError("direct source interval must be non-empty")
+    if workers <= 0 or workers > 4:
+        raise HfDukascopyValidationError("direct source workers must be in 1..4")
+    verifier = acquirer or DirectDukascopyAcquirer(
+        cache_root, symbol=instrument.dataset_symbol
+    )
+    if verifier.symbol != instrument.dataset_symbol:
+        raise HfDukascopyValidationError("direct acquirer symbol mismatch")
+    hours: list[datetime] = []
+    current = start.replace(minute=0)
+    while current < end:
+        hours.append(current)
+        current += timedelta(hours=1)
+    results = {}
+    with ThreadPoolExecutor(max_workers=workers) as executor:
+        futures = {executor.submit(verifier.acquire, hour, end): hour for hour in hours}
+        for future in as_completed(futures):
+            hour = futures[future]
+            try:
+                results[hour] = future.result()
+            except Exception as error:
+                raise HfDukascopyValidationError(
+                    f"direct BI5 acquisition failed at {_format_utc(hour)}"
+                ) from error
+
+    bid_bars: list[SourceBar] = []
+    ask_bars: list[SourceBar] = []
+    evidence: list[dict[str, Any]] = []
+    source_urls: list[str] = []
+    for hour in hours:
+        result = results[hour]
+        if (
+            result.outcome != "verified"
+            or result.cache_relative_path is None
+            or result.content_sha256 is None
+            or result.tick_count is None
+        ):
+            raise HfDukascopyValidationError(
+                f"direct BI5 hour is not verified: {_format_utc(hour)}"
+            )
+        payload = (cache_root.resolve() / result.cache_relative_path).read_bytes()
+        decoded = (
+            _decode_ticks(
+                hour,
+                payload,
+                price_format=_probe_price_format(payload),
+                price_divisor=float(10**instrument.price_precision),
+            )
+            if payload
+            else ()
+        )
+        aggregate: _MinuteAggregate | None = None
+        completed: list[_MinuteAggregate] = []
+        admitted_ticks = 0
+        for tick in decoded:
+            if not start <= tick.ts < end:
+                continue
+            aggregate, emitted = _advance_minute_aggregate(
+                aggregate,
+                _datetime_ms(tick.ts),
+                _decimal_float(tick.bid),
+                _decimal_float(tick.ask),
+                _decimal_float(tick.bid_vol),
+                _decimal_float(tick.ask_vol),
+            )
+            if emitted is not None:
+                completed.append(emitted)
+            admitted_ticks += 1
+        if aggregate is not None:
+            completed.append(aggregate)
+        for item in completed:
+            bid, ask = _source_bar_pair(item)
+            bid_bars.append(bid)
+            ask_bars.append(ask)
+        source_urls.append(result.source_url)
+        evidence.append(
+            {
+                "hour_start_utc": _format_utc(hour),
+                "source_url": result.source_url,
+                "content_sha256": result.content_sha256,
+                "content_size": result.content_size,
+                "tick_count": result.tick_count,
+                "admitted_tick_count": admitted_ticks,
+                "cache_relative_path": result.cache_relative_path,
+            }
+        )
+    if tuple(item.timestamp for item in bid_bars) != tuple(
+        item.timestamp for item in ask_bars
+    ):
+        raise HfDukascopyValidationError("direct BI5 BID/ASK coverage mismatch")
+    if any(
+        current.timestamp <= previous.timestamp
+        for previous, current in zip(bid_bars, bid_bars[1:])
+    ):
+        raise HfDukascopyValidationError("direct BI5 bars are not chronological")
+    evidence_sha = hashlib.sha256(
+        json.dumps(evidence, sort_keys=True, separators=(",", ":")).encode()
+    ).hexdigest()
+    return DirectSourceSegment(
+        start_utc=start,
+        end_exclusive_utc=end,
+        bid_bars=tuple(bid_bars),
+        ask_bars=tuple(ask_bars),
+        admitted_tick_count=sum(item["admitted_tick_count"] for item in evidence),
+        evidence_sha256=evidence_sha,
+        source_urls=tuple(source_urls),
+    )
+
+
+def report_instrument_inventory(
+    plan_path: Path,
+    instrument_id: str,
+    *,
+    api: HfApi | None = None,
+) -> InstrumentInventoryReport:
+    """Inspect pinned metadata without acquiring any physical source shard."""
+
+    plan = load_research_universe_plan(plan_path)
+    instrument = plan.instrument(instrument_id)
+    repo_files, metadata = _pinned_universe_inventory(api or HfApi(), plan)
+    source_prefix = f"data/{instrument.dataset_symbol}/"
+    source_paths = tuple(path for path in repo_files if path.startswith(source_prefix))
+    selected = discover_instrument_source_plan(
+        instrument,
+        repo_files,
+        plan.huggingface_revision,
+        plan.permitted_start_utc,
+        plan.permitted_end_exclusive_utc,
+        metadata=metadata,
+        split_boundaries=(plan.validation.start, plan.holdout_cutoff_utc.date()),
+        reject_straddling_end=True,
+    )
+
+    def total_size(paths: Sequence[str]) -> int | None:
+        sizes = [
+            metadata.get(path, RemoteFileMetadata(None, None)).size for path in paths
+        ]
+        return (
+            None
+            if any(value is None for value in sizes)
+            else sum(cast(list[int], sizes))
+        )
+
+    last_safe = selected[-1].filename_end_date
+    return InstrumentInventoryReport(
+        instrument_id=instrument.instrument_id,
+        dataset_symbol=instrument.dataset_symbol,
+        dataset_revision=plan.huggingface_revision,
+        shard_count=len(source_paths),
+        selected_safe_shard_count=len(selected),
+        total_source_bytes=total_size(source_paths),
+        selected_safe_bytes=total_size([item.repo_path for item in selected]),
+        direct_tail_required=(
+            last_safe < (plan.permitted_end_exclusive_utc - _MILLISECOND).date()
+        ),
+        last_safe_date_inclusive=last_safe,
+    )
+
+
+def _validate_direct_tail(
+    segment: DirectSourceSegment | None,
+    expected_start: datetime,
+    expected_end: datetime,
+    plan: ResearchUniversePlan,
+    instrument: InstrumentSpec,
+) -> None:
+    if segment is None:
+        raise HfDukascopyValidationError(
+            "a verified direct Dukascopy tail is required after the final safe HF shard"
+        )
+    if segment.start_utc != expected_start or segment.end_exclusive_utc != expected_end:
+        raise HfDukascopyValidationError(
+            "direct tail does not exactly cover the HF gap"
+        )
+    if segment.end_exclusive_utc > plan.holdout_cutoff_utc:
+        raise HfDukascopyValidationError("direct tail crosses the holdout cutoff")
+    if not re.fullmatch(r"[0-9a-f]{64}", segment.evidence_sha256):
+        raise HfDukascopyValidationError("direct tail lacks immutable evidence")
+    if not segment.source_urls or any(
+        f"/{instrument.dataset_symbol}/" not in url for url in segment.source_urls
+    ):
+        raise HfDukascopyValidationError("direct tail URLs do not match the instrument")
+    if len(segment.bid_bars) != len(segment.ask_bars) or not segment.bid_bars:
+        raise HfDukascopyValidationError("direct tail must contain paired BID/ASK bars")
+    if (
+        not isinstance(segment.admitted_tick_count, int)
+        or isinstance(segment.admitted_tick_count, bool)
+        or segment.admitted_tick_count < len(segment.bid_bars)
+    ):
+        raise HfDukascopyValidationError(
+            "direct tail has an invalid admitted tick count"
+        )
+
+
+def _prove_catalog_bounds(
+    catalog: ParquetDataCatalog,
+    instrument: InstrumentSpec,
+    start: datetime,
+    end: datetime,
+    expected_count: int,
+) -> None:
+    """Boundedly prove no stored event or initialization timestamp reaches holdout."""
+
+    start_ns = int(start.timestamp() * 1_000_000_000)
+    end_ns = int(end.timestamp() * 1_000_000_000)
+    chunk_ns = 10_000 * _MINUTE_MS * 1_000_000
+    for side in ("BID", "ASK"):
+        bar_type = instrument.bar_type(minutes=1, side=side, aggregation="EXTERNAL")
+        count = 0
+        cursor = start_ns
+        previous: int | None = None
+        while cursor < end_ns:
+            stop = min(cursor + chunk_ns, end_ns)
+            bars = tuple(
+                bar
+                for bar in catalog.query_bars([bar_type], start=cursor, end=stop)
+                if cursor <= bar.ts_event < stop
+            )
+            for bar in bars:
+                if (
+                    str(bar.bar_type) != bar_type
+                    or bar.ts_event < start_ns
+                    or bar.ts_event >= end_ns
+                    or bar.ts_init > end_ns
+                    or (previous is not None and bar.ts_event <= previous)
+                ):
+                    raise HfDukascopyValidationError(
+                        f"final {side} catalog range/ordering proof failed"
+                    )
+                previous = bar.ts_event
+            count += len(bars)
+            cursor = stop
+        if count != expected_count:
+            raise HfDukascopyValidationError(f"final {side} catalog count proof failed")
+
+
+def _emit_direct_pair(
+    state: _StreamState, bid: SourceBar, ask: SourceBar, cutoff: datetime
+) -> None:
+    if bid.timestamp != ask.timestamp or bid.timestamp >= cutoff:
+        raise HfDukascopyValidationError(
+            "direct tail has mismatched or holdout timestamps"
+        )
+    if bid.timestamp < state.next_expected_minute:
+        raise HfDukascopyValidationError(
+            "direct tail overlaps or precedes the HF segment"
+        )
+    if bid.timestamp > state.next_expected_minute:
+        state.missing_intervals.append(
+            _missing_range(state.next_expected_minute, bid.timestamp - _ONE_MINUTE)
+        )
+    for field in ("open", "high", "low", "close"):
+        if getattr(ask, field) < getattr(bid, field):
+            raise HfDukascopyValidationError("direct tail ASK is below BID")
+    state.bid_pending.append(bid)
+    state.ask_pending.append(ask)
+    state.bar_count += 1
+    state.next_expected_minute = bid.timestamp + _ONE_MINUTE
+    if len(state.bid_pending) >= _WRITE_CHUNK_BARS:
+        _write_pending(state)
+
+
+def _pinned_universe_inventory(
+    api: HfApi, plan: ResearchUniversePlan
+) -> tuple[list[str], dict[str, RemoteFileMetadata]]:
+    info = api.dataset_info(
+        plan.huggingface_repo,
+        revision=plan.huggingface_revision,
+        files_metadata=True,
+    )
+    if info.sha != plan.huggingface_revision:
+        raise HfDukascopyValidationError("resolved revision differs from universe plan")
+    repo_files = api.list_repo_files(
+        plan.huggingface_repo,
+        revision=plan.huggingface_revision,
+        repo_type=HF_REPO_TYPE,
+    )
+    metadata: dict[str, RemoteFileMetadata] = {}
+    for sibling in info.siblings or ():
+        lfs = sibling.lfs
+        metadata[sibling.rfilename] = RemoteFileMetadata(
+            sibling.size, None if lfs is None else lfs.sha256
+        )
+    return list(repo_files), metadata
 
 
 def _pinned_inventory(
@@ -682,9 +1251,7 @@ def _advance_minute_aggregate(
     minute_ms = (timestamp_ms // _MINUTE_MS) * _MINUTE_MS
     if current is None:
         return (
-            _MinuteAggregate.from_tick(
-                minute_ms, bid, ask, bid_volume, ask_volume
-            ),
+            _MinuteAggregate.from_tick(minute_ms, bid, ask, bid_volume, ask_volume),
             None,
         )
     if minute_ms == current.minute_ms:
@@ -693,9 +1260,7 @@ def _advance_minute_aggregate(
     if minute_ms < current.minute_ms:
         raise HfDukascopyValidationError("minute aggregation received backwards ticks")
     return (
-        _MinuteAggregate.from_tick(
-            minute_ms, bid, ask, bid_volume, ask_volume
-        ),
+        _MinuteAggregate.from_tick(minute_ms, bid, ask, bid_volume, ask_volume),
         current,
     )
 
@@ -759,8 +1324,13 @@ def _source_bar_pair(item: _MinuteAggregate) -> tuple[SourceBar, SourceBar]:
 def _write_pending(state: _StreamState) -> None:
     if not state.bid_pending:
         return
-    bid_bars = _to_nautilus_bars(state.bid_pending, "BID")
-    ask_bars = _to_nautilus_bars(state.ask_pending, "ASK")
+    if state.instrument == EURUSD_SPEC:
+        # Preserve the exact legacy encoder and its float-text tolerance.
+        bid_bars = _to_nautilus_bars(state.bid_pending, "BID")
+        ask_bars = _to_nautilus_bars(state.ask_pending, "ASK")
+    else:
+        bid_bars = to_nautilus_bars(state.bid_pending, "BID", state.instrument)
+        ask_bars = to_nautilus_bars(state.ask_pending, "ASK", state.instrument)
     _validate_paired_bars(bid_bars, ask_bars)
     state.catalog.write_bars(bid_bars)
     state.catalog.write_bars(ask_bars)
@@ -870,6 +1440,111 @@ def _manifest_payload(
         "semantic_hash_contract": (
             "SHA-256 of canonical JSON for every other manifest field; no fetch "
             "or wall-clock timestamp is included"
+        ),
+    }
+
+
+def _instrument_manifest_payload(
+    *,
+    plan: ResearchUniversePlan,
+    instrument: InstrumentSpec,
+    start: datetime,
+    end: datetime,
+    catalog_path: Path,
+    root: Path,
+    source_results: Sequence[SourceFileResult],
+    direct_tail: DirectSourceSegment | None,
+    admitted_tick_count: int,
+    bar_count: int,
+    missing: Sequence[MissingInterval],
+    data_use_rights_evidence_sha256: str,
+) -> dict[str, Any]:
+    source_segments: list[dict[str, Any]] = [
+        {
+            "kind": "pinned_hugging_face_parquet",
+            "start_utc": _format_utc(start),
+            "end_exclusive_utc": _format_utc(
+                min(
+                    end,
+                    datetime.combine(
+                        date.fromisoformat(source_results[-1].filename_end_date)
+                        + timedelta(days=1),
+                        datetime.min.time(),
+                        tzinfo=UTC,
+                    ),
+                )
+            ),
+            "overlaps_next_segment": False,
+        }
+    ]
+    if direct_tail is not None:
+        source_segments.append(
+            {
+                "kind": "direct_dukascopy_bi5_cutoff_completion",
+                "start_utc": _format_utc(direct_tail.start_utc),
+                "end_exclusive_utc": _format_utc(direct_tail.end_exclusive_utc),
+                "evidence_sha256": direct_tail.evidence_sha256,
+                "admitted_tick_count": direct_tail.admitted_tick_count,
+                "source_urls": list(direct_tail.source_urls),
+                "overlaps_previous_segment": False,
+            }
+        )
+    return {
+        "provider": "Dukascopy",
+        "market_data_origin": plan.market_data_origin,
+        "distribution_source": plan.distribution_source,
+        "dataset_repo": plan.huggingface_repo,
+        "dataset_revision": plan.huggingface_revision,
+        "dataset_id": plan.universe_id,
+        "dataset_plan_sha256": plan.semantic_sha256,
+        "data_use_rights": {
+            "plan_status": plan.data_use_rights_status,
+            "evidence_sha256": data_use_rights_evidence_sha256,
+            "release_blocker_resolved_for_this_acquisition": True,
+        },
+        "symbol": instrument.dataset_symbol,
+        "instrument_id": instrument.instrument_id,
+        "base_currency": instrument.base_currency,
+        "quote_currency": instrument.quote_currency,
+        "session_policy_id": instrument.session_policy_id,
+        "requested_utc_range": {
+            "start_date": start.date().isoformat(),
+            "end_date_inclusive": (end.date() - timedelta(days=1)).isoformat(),
+        },
+        "g1_cutoff_end_exclusive_utc": _format_utc(plan.holdout_cutoff_utc),
+        "source_granularity": "1-minute",
+        "price_sides": ["BID", "ASK"],
+        "source_timestamp_convention": "raw_unix_epoch_milliseconds_to_bar_open_utc",
+        "fills_or_interpolation": False,
+        "source_files": [asdict(item) for item in source_results],
+        "source_segments": source_segments,
+        "catalog_location": catalog_path.relative_to(root).as_posix(),
+        "ingestion_version": HF_INGESTION_VERSION,
+        "config_version": 1,
+        "nautilus_version": NAUTILUS_VERSION,
+        "nautilus_encoding": {
+            "price_precision": instrument.price_precision,
+            "size_precision": instrument.size_precision,
+            "ts_event": "bar_open_utc",
+            "ts_init": "bar_close_utc",
+        },
+        "qa": {
+            "admitted_tick_count": admitted_tick_count,
+            "holdout_rows_admitted": 0,
+            "bid_bar_count": bar_count,
+            "ask_bar_count": bar_count,
+            "missing_interval_count": sum(item.minutes for item in missing),
+            "missing_intervals_utc": [asdict(item) for item in missing],
+            "gaps_filled": False,
+        },
+        "bounded_memory": {
+            "parquet_processing": "one file and one record batch at a time",
+            "instrument_processing": "one instrument at a time",
+            "catalog_write_chunk_bars": _WRITE_CHUNK_BARS,
+        },
+        "semantic_hash_contract": (
+            "SHA-256 of canonical JSON for every other manifest field; no absolute "
+            "path or wall-clock timestamp is included"
         ),
     }
 

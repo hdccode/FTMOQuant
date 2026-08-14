@@ -1,0 +1,22 @@
+{
+  "schema_version": 1,
+  "decision_id": "g1-4a-hf-personal-research-use-v1",
+  "recorded_utc_date": "2026-08-14",
+  "decision_authority": "project_owner",
+  "approved_use": {
+    "project": "FTMOQuant",
+    "purpose": "personal non-commercial research",
+    "dataset_repo": "mito0o852/dukascopy-ticks",
+    "dataset_revision": "bf19dbd89c732f010e20db7c148922ba02b2e33b",
+    "instruments": [
+      "EUR/USD.DUKASCOPY",
+      "GBP/USD.DUKASCOPY"
+    ],
+    "permitted_end_exclusive_utc": "2024-08-21T00:00:00Z"
+  },
+  "decision_basis": "Project-owner approval based on creator-use permission.",
+  "external_permission_url": null,
+  "dataset_license_metadata_declared": false,
+  "repository_wide_license_conclusion_changed": false,
+  "notes": "This records the project owner's existing scoped decision. It is not a claim that the dataset repository declares a license."
+}
