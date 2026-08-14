@@ -45,6 +45,7 @@ from ftmoquant.data.research_plan import (
     ResearchDataPlan,
     load_research_data_plan,
 )
+from ftmoquant.data.session_coverage import is_fx_expected_open
 from ftmoquant.data.session_reconciliation import DirectDukascopyAcquirer
 from ftmoquant.data.universe_plan import (
     ResearchUniversePlan,
@@ -723,11 +724,7 @@ def acquire_direct_cutoff_segment(
     )
     if verifier.symbol != instrument.dataset_symbol:
         raise HfDukascopyValidationError("direct acquirer symbol mismatch")
-    hours: list[datetime] = []
-    current = start.replace(minute=0)
-    while current < end:
-        hours.append(current)
-        current += timedelta(hours=1)
+    hours = _direct_expected_open_hours(instrument, start, end)
     results = {}
     with ThreadPoolExecutor(max_workers=workers) as executor:
         futures = {executor.submit(verifier.acquire, hour, end): hour for hour in hours}
@@ -822,6 +819,28 @@ def acquire_direct_cutoff_segment(
         evidence_sha256=evidence_sha,
         source_urls=tuple(source_urls),
     )
+
+
+def _direct_expected_open_hours(
+    instrument: InstrumentSpec, start: datetime, end: datetime
+) -> list[datetime]:
+    """Return only BI5 hours containing a frozen-policy expected-open minute."""
+
+    result: list[datetime] = []
+    hour = start.replace(minute=0)
+    while hour < end:
+        minute = max(hour, start)
+        stop = min(hour + timedelta(hours=1), end)
+        if any(
+            is_fx_expected_open(candidate, instrument.session_policy_id)
+            for candidate in (
+                minute + offset * _ONE_MINUTE
+                for offset in range(int((stop - minute) / _ONE_MINUTE))
+            )
+        ):
+            result.append(hour)
+        hour += timedelta(hours=1)
+    return result
 
 
 def report_instrument_inventory(

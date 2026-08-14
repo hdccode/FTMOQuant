@@ -248,6 +248,19 @@ def test_direct_cutoff_segment_keeps_verified_zero_tick_hours_empty(
     assert len(segment.evidence_sha256) == 64
 
 
+def test_direct_tail_scheduler_skips_closed_weekend_hours() -> None:
+    start = datetime(2024, 8, 16, tzinfo=UTC)
+    end = datetime(2024, 8, 19, tzinfo=UTC)
+
+    hours = hf._direct_expected_open_hours(GBPUSD_SPEC, start, end)
+
+    assert hours[0] == start
+    assert hours[-1] == datetime(2024, 8, 18, 23, tzinfo=UTC)
+    assert datetime(2024, 8, 17, 8, tzinfo=UTC) not in hours
+    assert datetime(2024, 8, 18, 20, tzinfo=UTC) not in hours
+    assert datetime(2024, 8, 18, 21, tzinfo=UTC) in hours
+
+
 def test_generic_correction_accepts_only_direct_tick_evidence() -> None:
     reconciliation = {
         "unexplained_missing_intervals_utc": [
