@@ -15,6 +15,10 @@ from zoneinfo import ZoneInfo
 from nautilus_trader.model import Bar
 from nautilus_trader.persistence import ParquetDataCatalog
 
+from ftmoquant.data.canonical_source import (
+    CanonicalSourceValidationError,
+    validate_canonical_eurusd_source_manifest,
+)
 from ftmoquant.data.derived_bars import (
     DERIVATION_VERSION,
     DERIVED_MANIFEST_FILENAME,
@@ -49,8 +53,7 @@ _AUTHORITATIVE_SOURCES: tuple[dict[str, str], ...] = (
             "Friday close"
         ),
         "url": (
-            "https://www.dukascopy.com/swiss/english/forex/"
-            "forex-trading-accounts/link/"
+            "https://www.dukascopy.com/swiss/english/forex/forex-trading-accounts/link/"
         ),
     },
     {
@@ -234,7 +237,7 @@ def run_eurusd_session_coverage_qa(output_root: Path) -> SessionCoverageResult:
     derived_path = root / DERIVED_MANIFEST_FILENAME
     catalog_path = root / "catalog"
     parent = _load_json_object(parent_path, "G0.5 source manifest")
-    _validate_parent_manifest(parent)
+    parent_ingestion_version = _validate_parent_manifest(parent)
     start, end = _requested_interval(parent)
     if not catalog_path.is_dir():
         raise CoverageValidationError(f"missing G0.5 catalog: {catalog_path}")
@@ -253,12 +256,15 @@ def run_eurusd_session_coverage_qa(output_root: Path) -> SessionCoverageResult:
 
     parent_sha256 = _sha256(parent_path)
     derived = _load_json_object(derived_path, "G0.6 derived manifest")
-    structural_valid = _derived_structure_valid(derived, parent_sha256, sources)
+    structural_valid = _derived_structure_valid(
+        derived, parent_sha256, sources, parent_ingestion_version
+    )
     payload = _coverage_manifest(
         assessment=assessment,
         parent_sha256=parent_sha256,
         derived_sha256=_sha256(derived_path),
         structural_valid=structural_valid,
+        parent_ingestion_version=parent_ingestion_version,
     )
     semantic_sha256 = _semantic_sha256(payload)
     manifest = {**payload, "semantic_sha256": semantic_sha256}
@@ -286,6 +292,7 @@ def _coverage_manifest(
     parent_sha256: str,
     derived_sha256: str,
     structural_valid: bool,
+    parent_ingestion_version: str = INGESTION_VERSION,
 ) -> dict[str, Any]:
     return {
         "coverage_qa_version": COVERAGE_QA_VERSION,
@@ -334,6 +341,7 @@ def _coverage_manifest(
         },
         "parent_g0_5_manifest": PARENT_MANIFEST_FILENAME,
         "parent_g0_5_manifest_sha256": parent_sha256,
+        "parent_ingestion_version": parent_ingestion_version,
         "structural_g0_6_manifest": DERIVED_MANIFEST_FILENAME,
         "structural_g0_6_manifest_sha256": derived_sha256,
         "counts": {
@@ -343,9 +351,7 @@ def _coverage_manifest(
             "observed_paired_expected_open_minute_count": (
                 assessment.observed_paired_expected_open_minute_count
             ),
-            "expected_closure_minute_count": (
-                assessment.expected_closure_minute_count
-            ),
+            "expected_closure_minute_count": (assessment.expected_closure_minute_count),
             "unexplained_missing_minute_count": (
                 assessment.unexplained_missing_minute_count
             ),
@@ -368,19 +374,12 @@ def _coverage_manifest(
     }
 
 
-def _validate_parent_manifest(manifest: dict[str, Any]) -> None:
-    expected = {
-        "provider": "Dukascopy",
-        "symbol": "EURUSD",
-        "instrument_id": INSTRUMENT_ID,
-        "source_granularity": "1-minute",
-        "price_sides": ["BID", "ASK"],
-        "ingestion_version": INGESTION_VERSION,
-        "nautilus_version": NAUTILUS_VERSION,
-    }
-    for field, value in expected.items():
-        if manifest.get(field) != value:
-            raise CoverageValidationError(f"G0.5 source manifest has invalid {field}")
+def _validate_parent_manifest(manifest: dict[str, Any]) -> str:
+    try:
+        identity = validate_canonical_eurusd_source_manifest(manifest)
+    except CanonicalSourceValidationError as error:
+        raise CoverageValidationError(str(error)) from error
+    return identity.ingestion_version
 
 
 def _requested_interval(manifest: dict[str, Any]) -> tuple[datetime, datetime]:
@@ -456,12 +455,13 @@ def _derived_structure_valid(
     manifest: dict[str, Any],
     parent_sha256: str,
     sources: dict[str, tuple[Bar, ...]],
+    parent_ingestion_version: str = INGESTION_VERSION,
 ) -> bool:
     expected = {
         "derivation_version": DERIVATION_VERSION,
         "parent_g0_5_manifest": PARENT_MANIFEST_FILENAME,
         "parent_g0_5_manifest_sha256": parent_sha256,
-        "parent_ingestion_version": INGESTION_VERSION,
+        "parent_ingestion_version": parent_ingestion_version,
         "nautilus_version": NAUTILUS_VERSION,
         "instrument_id": INSTRUMENT_ID,
     }

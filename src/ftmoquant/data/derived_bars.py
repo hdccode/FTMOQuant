@@ -27,6 +27,10 @@ from nautilus_trader.model import (
 )
 from nautilus_trader.persistence import ParquetDataCatalog
 
+from ftmoquant.data.canonical_source import (
+    CanonicalSourceValidationError,
+    validate_canonical_eurusd_source_manifest,
+)
 from ftmoquant.data.dukascopy import INSTRUMENT_ID, NAUTILUS_VERSION
 
 DERIVATION_VERSION = "g0.6-1"
@@ -96,7 +100,7 @@ class _BarCollector(DataActor):
 
 
 def derive_eurusd_bars(output_root: Path) -> DerivationResult:
-    """Derive complete UTC 1H/4H BID/ASK bars from the G0.5 catalog."""
+    """Derive complete UTC 1H/4H bars from a trusted canonical 1m catalog."""
 
     root = output_root.resolve()
     parent_manifest_path = root / PARENT_MANIFEST_FILENAME
@@ -206,18 +210,10 @@ def _load_parent_manifest(path: Path) -> dict[str, Any]:
     if not isinstance(value, dict):
         raise DerivationValidationError("G0.5 parent manifest must be an object")
     manifest = cast(dict[str, Any], value)
-    expected = {
-        "instrument_id": INSTRUMENT_ID,
-        "source_granularity": "1-minute",
-        "price_sides": ["BID", "ASK"],
-        "nautilus_version": NAUTILUS_VERSION,
-        "ingestion_version": "g0.5-1",
-    }
-    for field, expected_value in expected.items():
-        if manifest.get(field) != expected_value:
-            raise DerivationValidationError(
-                f"G0.5 parent manifest has incompatible {field}"
-            )
+    try:
+        validate_canonical_eurusd_source_manifest(manifest)
+    except CanonicalSourceValidationError as error:
+        raise DerivationValidationError(str(error)) from error
     return manifest
 
 
@@ -241,9 +237,7 @@ def _requested_range_ns(manifest: dict[str, Any]) -> tuple[int, int]:
     )
     if end <= start:
         raise DerivationValidationError("G0.5 requested UTC range is empty")
-    return int(start.timestamp() * 1_000_000_000), int(
-        end.timestamp() * 1_000_000_000
-    )
+    return int(start.timestamp() * 1_000_000_000), int(end.timestamp() * 1_000_000_000)
 
 
 def _validate_sources(
@@ -303,13 +297,9 @@ def _eligible_source_bars(
     interval_ns = hours * 60 * _MINUTE_NS
     first_observed_start = (bars[0].ts_event // interval_ns) * interval_ns
     last_observed_start = (bars[-1].ts_event // interval_ns) * interval_ns
-    first_start = (
-        first_observed_start if range_start_ns is None else range_start_ns
-    )
+    first_start = first_observed_start if range_start_ns is None else range_start_ns
     end_exclusive = (
-        last_observed_start + interval_ns
-        if range_end_ns is None
-        else range_end_ns
+        last_observed_start + interval_ns if range_end_ns is None else range_end_ns
     )
     if first_start % interval_ns != 0 or end_exclusive % interval_ns != 0:
         raise DerivationValidationError(

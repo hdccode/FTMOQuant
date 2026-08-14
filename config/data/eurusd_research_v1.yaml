@@ -1,0 +1,29 @@
+dataset_id: eurusd_research_v1
+
+market_data:
+  market_data_origin: Dukascopy
+  distribution_source: Hugging Face
+  huggingface_repo: mito0o852/dukascopy-ticks
+  huggingface_revision: bf19dbd89c732f010e20db7c148922ba02b2e33b
+  instrument: EUR/USD.DUKASCOPY
+
+full_universe:
+  start_utc_date: "2019-03-11"
+  end_utc_date: "2025-12-31"
+
+split:
+  boundary_rule: cumulative_fraction_floor_whole_utc_days
+  development:
+    start: "2019-03-11"
+    end: "2023-04-10"
+    days: 1492
+  validation:
+    start: "2023-04-11"
+    end: "2024-08-20"
+    days: 498
+  final_holdout:
+    start: "2024-08-21"
+    end: "2025-12-31"
+    days: 498
+
+g1_allowed_end_exclusive: "2024-08-21T00:00:00Z"

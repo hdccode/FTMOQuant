@@ -10,6 +10,7 @@ readme = "README.md"
 requires-python = ">=3.12,<3.13"
 dependencies = [
     "arch==8.0.0",
+    "huggingface-hub==1.27.0",
     "nautilus-trader==2.0.0rc2",
     "pandas>=2.3.3,<4.0.0",
     "pyarrow>=16.1,<23.0.0",
@@ -19,6 +20,7 @@ dependencies = [
 
 [project.scripts]
 ftmoquant-ingest-eurusd = "ftmoquant.data.dukascopy:main"
+ftmoquant-ingest-hf-eurusd = "ftmoquant.data.hf_dukascopy:main"
 ftmoquant-derive-eurusd-bars = "ftmoquant.data.derived_bars:main"
 ftmoquant-qa-eurusd-coverage = "ftmoquant.data.session_coverage:main"
 

@@ -118,6 +118,93 @@ instrument are stored only through `ParquetDataCatalog`. PyArrow is a direct
 dependency solely because the v2 wrangler accepts Arrow IPC bytes rather than
 a pandas DataFrame.
 
+## G1 Hugging Face Dukascopy tick adapter
+
+The research-data plan uses Dukascopy as the market-data origin and Hugging
+Face only as the distribution source. The official `HfApi.dataset_info` call
+resolved `mito0o852/dukascopy-ticks` to immutable revision
+`bf19dbd89c732f010e20db7c148922ba02b2e33b` before any market-data processing.
+That full SHA is frozen in `config/data/eurusd_research_v1.yaml`; runtime
+metadata and every download are requested at the same SHA, never at `main`.
+Updating the remote repository cannot move this plan.
+
+`huggingface-hub==1.27.0` is adopted as the smallest official client boundary.
+The importer uses `dataset_info(..., files_metadata=True)` to confirm the
+resolved SHA and obtain sizes/LFS hashes, `list_repo_files(..., revision=SHA)`
+for inventory, and `hf_hub_download(..., repo_type="dataset", revision=SHA)`
+for one selected file at a time. The Hub cache is therefore reused on repeated
+downloads. The much larger `datasets` package is not needed and was not added.
+The relevant official references are the Hugging Face
+[HfApi reference](https://huggingface.co/docs/huggingface_hub/en/package_reference/hf_api)
+and [revision-pinned download guide](https://huggingface.co/docs/huggingface_hub/en/guides/download).
+
+The pinned EUR/USD inventory is an unpartitioned sequence of inclusive
+30-calendar-day filename ranges. It is validated for exact
+`data/EURUSD/YYYY-MM-DD_YYYY-MM-DD.parquet` names, ordering, duplicate ranges,
+overlaps, and date gaps before selection. Other instruments are never selected.
+The G1 cutoff falls inside
+`data/EURUSD/2024-08-16_2024-09-14.parquet`; selecting that packaging shard is
+permitted, but an explicit raw `timestamp < 2024-08-21T00:00:00Z` predicate is
+applied to every Arrow batch before conversion, validation callbacks,
+aggregation, or provenance counting.
+
+The actual pinned Parquet schema, verified on the development-only integration
+shard, is exactly:
+
+- `timestamp: int64`
+- `askPrice: double`
+- `bidPrice: double`
+- `askVolume: double`
+- `bidVolume: double`
+
+PyArrow `22.0.0` (within the existing project constraint) is reused through
+`ParquetFile.schema_arrow` and `iter_batches`. Each shard is scanned one record
+batch at a time. Arrow compute filters the admitted half-open UTC range before
+columns become Python values. Only the current minute aggregate, previous tick
+timestamp, bounded output-bar chunk, counters, hashes, and missing-interval
+state survive a batch or file boundary. This follows the official
+[`ParquetFile.iter_batches`](https://arrow.apache.org/docs/python/generated/pyarrow.parquet.ParquetFile.html)
+contract; neither multiple years of ticks nor all canonical bars are retained
+in Python memory.
+
+The timestamp unit is proved rather than configured heuristically. For an
+admitted raw integer in every shard, the adapter tries Unix seconds,
+milliseconds, microseconds, and nanoseconds, converts each candidate to UTC,
+and requires that exactly the millisecond interpretation falls inside the
+filename-declared date range. Every admitted timestamp is then checked against
+that range and the source stream must remain monotonic nondecreasing. Equal
+milliseconds retain original Parquet row order as the first/last tie-breaker.
+
+The tick transformation is direct and side-specific: first/max/min/last price
+and summed same-side volume for each UTC minute containing at least one tick.
+No empty minute is created, filled, interpolated, or forward-filled. The
+existing G0.5 EUR/USD instrument, 5-digit price/8-digit size encoding,
+`BarDataWrangler`, external BID/ASK bar types, spread checks, and
+`ts_event=minute open` / `ts_init=minute open + 60 seconds` contract are reused.
+The resulting explicit ingestion identity is `g1-hf-dukascopy-1`; it never
+claims `tradedesk-dukascopy` performed the download.
+
+### Targeted GitHub reuse audit
+
+The pre-implementation audit searched for a reusable Hugging Face Parquet
+Dukascopy adapter and reviewed these primary sources:
+
+| Candidate | Finding |
+| --- | --- |
+| [huggingface/huggingface_hub](https://github.com/huggingface/huggingface_hub) and [huggingface/hub-docs streaming guidance](https://github.com/huggingface/hub-docs/blob/main/docs/hub/datasets-streaming.md) | Adopted only the official metadata, inventory, pinned-download/cache APIs and the documented Parquet row-group streaming pattern. The generic `HfFileSystem` layer and whole-repository snapshot download were unnecessary. |
+| [radiusred/tradedesk-dukascopy](https://github.com/radiusred/tradedesk-dukascopy/tree/b8fb503c9291d6e265949d008e288b76b68fb852) | Existing G0.5 instrument, precision, bar encoding, catalog, timestamp, gap, and spread-validation code was reused. Its BI5 acquisition identity was not reused for the Hugging Face distribution path. |
+| [theorycraft-trading/dukascopy](https://github.com/theorycraft-trading/dukascopy) | Provides an Elixir Dukascopy download/stream/resample stack, not a Python adapter for this pinned Hugging Face mirror or the sealed G1 cutoff; not adopted. |
+| [cpcerrato/dukascopy-downloader](https://github.com/cpcerrato/dukascopy-downloader) | Provides a separate .NET BI5 downloader and tick aggregation path. It would duplicate both the chosen distribution source and existing canonical encoding; not adopted. |
+
+No reviewed project supplied the required combination of immutable Hub
+revision provenance, strict mirror inventory validation, pre-conversion
+holdout filtering, and Nautilus `2.0.0rc2` encoding. The project-owned adapter
+is consequently limited to those seams. A shared canonical source-manifest
+validator now admits exactly the legacy `g0.5-1` identity and the new
+`g1-hf-dukascopy-1` identity. G0.6 and the session-aware coverage bridge use
+that validator without changing their aggregation or fail-closed coverage
+semantics.
+
 ## G0.6 native derived-bar adoption
 
 G0.6 uses NautilusTrader `2.0.0rc2` bar-to-bar composite aggregation. Its four
