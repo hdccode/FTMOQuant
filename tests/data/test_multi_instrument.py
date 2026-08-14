@@ -1,6 +1,7 @@
 import hashlib
 import json
 from datetime import UTC, datetime, timedelta
+from decimal import Decimal
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
@@ -18,10 +19,12 @@ from ftmoquant.data.canonical_source import (
     validate_canonical_source_manifest,
 )
 from ftmoquant.data.derived_bars import derive_instrument_bars
+from ftmoquant.data.dukascopy import SourceBar
 from ftmoquant.data.instruments import (
     GBPUSD_SPEC,
     InstrumentSpec,
     InstrumentSpecValidationError,
+    to_nautilus_bars,
 )
 from ftmoquant.data.research_plan import load_research_data_plan
 from ftmoquant.data.session_coverage import run_instrument_session_coverage
@@ -114,6 +117,21 @@ def test_instrument_spec_owns_bar_types_precision_and_native_identity() -> None:
     )
     with pytest.raises(InstrumentSpecValidationError, match="price_increment"):
         invalid_jpy.validate()
+
+
+def test_generic_encoder_quantizes_aggregated_volume_to_size_precision() -> None:
+    source = SourceBar(
+        timestamp=DAY,
+        open=Decimal("1.25000"),
+        high=Decimal("1.25000"),
+        low=Decimal("1.25000"),
+        close=Decimal("1.25000"),
+        volume=Decimal("1.123456789"),
+    )
+
+    bars = to_nautilus_bars([source], "BID", GBPUSD_SPEC)
+
+    assert str(bars[0].volume) == "1.12345679"
 
 
 def test_holdout_straddling_shard_is_excluded_for_gbp() -> None:

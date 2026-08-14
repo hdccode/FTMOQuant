@@ -188,11 +188,6 @@ def to_nautilus_bars(
 
     def size_bytes(value: Decimal) -> bytes:
         quantized = value.quantize(size_quantum)
-        if value != quantized:
-            raise InstrumentSpecValidationError(
-                f"{instrument.instrument_id} size cannot be represented at "
-                f"precision {instrument.size_precision}"
-            )
         raw = Quantity.from_str(format(quantized, f".{instrument.size_precision}f")).raw
         return raw.to_bytes(16, byteorder="little", signed=False)
 
