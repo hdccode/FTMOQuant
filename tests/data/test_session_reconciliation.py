@@ -198,6 +198,22 @@ def test_cache_retry_and_resume_do_not_change_verified_result(tmp_path: Path) ->
     assert first.content_sha256 == hashlib.sha256(payload).hexdigest()
 
 
+def test_cache_only_miss_never_calls_transport(tmp_path: Path) -> None:
+    hour = _dt("2024-01-02T12:00:00Z")
+
+    def must_not_fetch(_: str) -> NoReturn:
+        raise AssertionError("cache-only reconciliation attempted network access")
+
+    verification = reconciliation.DirectDukascopyAcquirer(
+        tmp_path,
+        transport=must_not_fetch,
+        cache_only=True,
+    ).acquire(hour, CUTOFF)
+
+    assert verification.outcome == "retrieval_failed"
+    assert verification.failure_reason == "cache_miss_cache_only"
+
+
 def test_classification_order_does_not_hide_direct_tick_with_offline_domain() -> None:
     minute = _dt("2024-01-02T12:03:00Z")
     hour = minute.replace(minute=0)

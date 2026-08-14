@@ -54,6 +54,12 @@ their ranges and tree hashes but infrastructure operators remain responsible for
 mount permissions, encryption, key custody, and disabling validation-runner
 network access.
 
+For a sealed local BI5 cache, run generic reconciliation with `--cache-only`;
+any absent or corrupt cache entry then fails closed without an HTTP request.
+`ftmoquant-correct-instrument` consumes only this sealed reconciliation evidence
+and cached BI5 hours. Use `--readiness-output-root` when the canonical artifact
+root itself must remain immutable.
+
 Universe freeze accepts no missing or extra roots and binds ordered artifact,
 catalog, split, and readiness hashes without absolute paths or wall-clock
 timestamps. No strategy or return calculation is invoked by this pipeline.

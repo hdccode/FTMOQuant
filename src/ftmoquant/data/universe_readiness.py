@@ -23,9 +23,13 @@ from ftmoquant.data.derived_bars import (
     PARENT_MANIFEST_FILENAME,
 )
 from ftmoquant.data.dukascopy import SourceBar
+from ftmoquant.data.hf_dukascopy import acquire_direct_cutoff_segment
 from ftmoquant.data.instruments import InstrumentSpec, to_nautilus_bars
 from ftmoquant.data.session_coverage import COVERAGE_MANIFEST_FILENAME
-from ftmoquant.data.session_reconciliation import RECONCILIATION_MANIFEST_FILENAME
+from ftmoquant.data.session_reconciliation import (
+    RECONCILIATION_MANIFEST_FILENAME,
+    DirectDukascopyAcquirer,
+)
 from ftmoquant.data.universe_plan import (
     load_research_universe_plan,
 )
@@ -207,6 +211,57 @@ def build_corrected_instrument_dataset(
         encoding="utf-8",
     )
     return path
+
+
+def build_cached_corrected_instrument_dataset(
+    instrument_spec: InstrumentSpec,
+    parent_root: Path,
+    output_root: Path,
+    cache_root: Path,
+) -> Path:
+    """Correct only reconciliation-proven minutes using already-cached BI5 data."""
+
+    parent = parent_root.resolve()
+    reconciliation = _semantic_json(
+        parent / RECONCILIATION_MANIFEST_FILENAME, "reconciliation"
+    )
+    expected = _proven_correction_minutes(reconciliation)
+    if not expected:
+        raise UniverseReadinessValidationError(
+            "reconciliation contains no direct-tick correction minutes"
+        )
+    cutoff = _utc(reconciliation["permitted_utc_interval"]["end_exclusive_utc"])
+    if any(timestamp >= cutoff for timestamp in expected):
+        raise UniverseReadinessValidationError("correction reaches the holdout cutoff")
+
+    acquirer = DirectDukascopyAcquirer(
+        cache_root, symbol=instrument_spec.dataset_symbol, cache_only=True
+    )
+    corrections: dict[datetime, tuple[SourceBar, SourceBar]] = {}
+    for hour in sorted({timestamp.replace(minute=0) for timestamp in expected}):
+        segment = acquire_direct_cutoff_segment(
+            instrument_spec,
+            hour,
+            hour + timedelta(hours=1),
+            cache_root,
+            workers=1,
+            acquirer=acquirer,
+        )
+        pairs = {
+            bid.timestamp: (bid, ask)
+            for bid, ask in zip(segment.bid_bars, segment.ask_bars, strict=True)
+        }
+        for timestamp in expected:
+            if timestamp.replace(minute=0) == hour:
+                pair = pairs.get(timestamp)
+                if pair is None:
+                    raise UniverseReadinessValidationError(
+                        "cached direct ticks do not produce every correction minute"
+                    )
+                corrections[timestamp] = pair
+    return build_corrected_instrument_dataset(
+        instrument_spec, parent, output_root, corrections
+    )
 
 
 def materialize_instrument_split_views(

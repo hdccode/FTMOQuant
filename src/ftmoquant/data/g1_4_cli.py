@@ -11,9 +11,13 @@ from typing import cast
 from ftmoquant.data.derived_bars import derive_instrument_bars
 from ftmoquant.data.hf_dukascopy import ingest_hf_instrument
 from ftmoquant.data.session_coverage import run_instrument_session_coverage
-from ftmoquant.data.session_reconciliation import run_instrument_reconciliation
+from ftmoquant.data.session_reconciliation import (
+    DirectDukascopyAcquirer,
+    run_instrument_reconciliation,
+)
 from ftmoquant.data.universe_plan import load_research_universe_plan
 from ftmoquant.data.universe_readiness import (
+    build_cached_corrected_instrument_dataset,
     freeze_instrument_readiness,
     freeze_universe_readiness,
     materialize_instrument_split_views,
@@ -68,17 +72,48 @@ def reconcile_main(argv: Sequence[str] | None = None) -> int:
     parser = _base("Reconcile one G1.4 instrument against direct Dukascopy BI5")
     parser.add_argument("--cache-root", required=True, type=Path)
     parser.add_argument("--offline-evidence", type=Path)
+    parser.add_argument(
+        "--cache-only",
+        action="store_true",
+        help="fail closed if any required BI5 hour is absent or corrupt in the cache",
+    )
     parser.add_argument("--workers", type=int, default=4)
     args = parser.parse_args(argv)
+    plan = load_research_universe_plan(cast(Path, args.plan))
+    cache_root = cast(Path, args.cache_root)
+    acquirer = None
+    if args.cache_only:
+        acquirer = DirectDukascopyAcquirer(
+            cache_root,
+            symbol=plan.instrument(cast(str, args.instrument_id)).dataset_symbol,
+            cache_only=True,
+        )
     result = run_instrument_reconciliation(
         cast(Path, args.plan),
         cast(str, args.instrument_id),
         cast(Path, args.output_root),
-        cast(Path, args.cache_root),
+        cache_root,
         offline_evidence_path=cast(Path | None, args.offline_evidence),
         workers=cast(int, args.workers),
+        acquirer=acquirer,
     )
     print(result.manifest_path)
+    return 0
+
+
+def correct_main(argv: Sequence[str] | None = None) -> int:
+    parser = _base("Correct one G1.4 instrument from sealed cached BI5 evidence")
+    parser.add_argument("--parent-root", required=True, type=Path)
+    parser.add_argument("--cache-root", required=True, type=Path)
+    args = parser.parse_args(argv)
+    plan = load_research_universe_plan(cast(Path, args.plan))
+    result = build_cached_corrected_instrument_dataset(
+        plan.instrument(cast(str, args.instrument_id)),
+        cast(Path, args.parent_root),
+        cast(Path, args.output_root),
+        cast(Path, args.cache_root),
+    )
+    print(result)
     return 0
 
 
@@ -100,12 +135,18 @@ def split_main(argv: Sequence[str] | None = None) -> int:
 def freeze_instrument_main(argv: Sequence[str] | None = None) -> int:
     parser = _base("Freeze one G1.4 instrument's readiness")
     parser.add_argument("--split-root", required=True, type=Path)
+    parser.add_argument(
+        "--readiness-output-root",
+        type=Path,
+        help="write the readiness reference outside an immutable artifact root",
+    )
     args = parser.parse_args(argv)
     result = freeze_instrument_readiness(
         cast(Path, args.plan),
         cast(str, args.instrument_id),
         cast(Path, args.output_root),
         cast(Path, args.split_root),
+        readiness_output_root=cast(Path | None, args.readiness_output_root),
     )
     print(result.readiness_sha256)
     return 0

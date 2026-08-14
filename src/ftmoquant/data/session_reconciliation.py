@@ -164,6 +164,7 @@ class DirectDukascopyAcquirer:
         *,
         symbol: str = "EURUSD",
         transport: Transport | None = None,
+        cache_only: bool = False,
         retries: int = 3,
         retry_delay_seconds: float = 0.8,
     ) -> None:
@@ -176,6 +177,7 @@ class DirectDukascopyAcquirer:
             raise ValueError("symbol must be exactly six uppercase letters")
         self.symbol = symbol
         self.transport = transport or _http_get
+        self.cache_only = cache_only
         self.retries = retries
         self.retry_delay_seconds = retry_delay_seconds
 
@@ -199,6 +201,8 @@ class DirectDukascopyAcquirer:
         raw_path, meta_path = self._cache_paths(hour)
         if raw_path.exists() or meta_path.exists():
             return self._load_cache(hour, source_url, raw_path, meta_path)
+        if self.cache_only:
+            return _failed_verification(hour, source_url, "cache_miss_cache_only")
 
         last_reason = "transport_failure"
         last_status: int | None = None

@@ -35,6 +35,7 @@ from ftmoquant.data.universe_plan import (
 from ftmoquant.data.universe_readiness import (
     InstrumentArtifactRef,
     UniverseReadinessManifest,
+    build_cached_corrected_instrument_dataset,
     build_corrected_instrument_dataset,
     freeze_instrument_readiness,
     freeze_universe_readiness,
@@ -54,6 +55,7 @@ __all__ = [
     "CoverageInterval",
     "CoverageValidationError",
     "build_corrected_instrument_dataset",
+    "build_cached_corrected_instrument_dataset",
     "derive_instrument_bars",
     "discover_instrument_source_plan",
     "SessionCoverageResult",
