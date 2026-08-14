@@ -352,6 +352,33 @@ calendar's holiday list is also unsafe: provider-specific offline intervals
 can differ, and unverified closure assumptions would convert missing source
 data into false research readiness.
 
+## G1 expected-open gap reconciliation
+
+### Targeted reuse audit
+
+The reconciliation audit was completed before implementation. It covered
+Dukascopy historical offline domains, direct BI5/tick retrieval, generic FX
+holiday calendars, and empty-minute handling. The reviewed state and decisions
+are:
+
+| Project or source | Exact revision/version | License | Decision and reason |
+| --- | --- | --- | --- |
+| [Dukascopy JForex `IDataService`](https://www.dukascopy.com/client/javadoc/com/dukascopy/api/IDataService.html) and [market-hours guide](https://www.dukascopy.com/wiki/en/development/strategy-api/instruments/market-hours/) | Published JForex API documentation `2.12.46`, retrieved 2026-08-13 | Dukascopy documentation/API terms | Authoritative reference and supported evidence format. `getOfflineTimeDomains(from, to)` is the provider interface for exact historical offline intervals. The Python reconciliation command accepts a semantically hashed export of those exact domains, but does not invent them when no authenticated JForex export is available. |
+| [radiusred/tradedesk-dukascopy](https://github.com/radiusred/tradedesk-dukascopy/tree/b8fb503c9291d6e265949d008e288b76b68fb852) | PyPI `1.0.0`, commit `b8fb503c9291d6e265949d008e288b76b68fb852` | Apache-2.0 | Adopted. The existing pinned dependency remains the direct Dukascopy BI5 URL/decoding reference. Reconciliation adds a thin status-preserving cache boundary because the public export command intentionally commits old partial days and its private downloader returns the same sentinel for HTTP 404 and exhausted network retries; either ambiguity is unsafe as proof of a zero-tick minute. |
+| [keyhankamyar/TickVault](https://github.com/keyhankamyar/TickVault/tree/d12cd8223a989cfce5f72b01be0120bb77899ef2) | Commit `d12cd8223a989cfce5f72b01be0120bb77899ef2` | MIT | Rejected as a dependency. It offers resume-capable hourly BI5 mirroring and SQLite status tracking, but would add `httpx`, Pydantic, NumPy/pandas, proxy, and database machinery for a small exact-window verifier already covered by the pinned provider path. |
+| [Praveens1234/dukascopy-downloader](https://github.com/Praveens1234/dukascopy-downloader/tree/56e28c4f8655e801ed972a5bb0bf1a7a0fa76abb) | Commit `56e28c4f8655e801ed972a5bb0bf1a7a0fa76abb` | MIT | Rejected. Its resumable application, web UI, native-candle fallbacks, and optional inactive-period candle generation are broader than reconciliation; generated inactive candles are explicitly incompatible with the no-synthesis rule. |
+| [gerrymanoim/exchange_calendars](https://github.com/gerrymanoim/exchange_calendars/tree/5308ce20578422fce74b10b43cc7d913a17e7a88) | Commit `5308ce20578422fce74b10b43cc7d913a17e7a88` | Apache-2.0 | Reference-only and rejected for classification. It provides exchange-specific regular/adhoc holiday machinery, not historical Dukascopy provider domains. A generic exchange holiday cannot prove that EUR/USD was offline at Dukascopy. |
+
+The official Dukascopy [Trading Breaks Calendar](https://www.dukascopy.com/swiss/english/marketwatch/trading-breaks-calendar/)
+and dated holiday news were also reviewed. They confirm that special schedules
+exist, but the public current calendar and archived announcements inspected do
+not expose a stable machine-readable historical EUR/USD interval feed. A dated
+headline or a holiday name is therefore never transformed into an offline
+interval. In the absence of an exact JForex domain export, an expected-open gap
+can only become `verified_no_tick` after a successful, validated direct BI5
+retrieval proves that exact minute contains no tick; retrieval failure, HTTP
+404, malformed payloads, or a direct tick all remain fail-closed.
+
 ## Multi-year G0.6 and session-QA catalog streaming
 
 The full G1 development-plus-validation catalog contains several million
