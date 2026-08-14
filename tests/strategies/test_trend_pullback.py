@@ -350,6 +350,35 @@ def test_native_pairer_does_not_carry_a_missing_side_forward() -> None:
     assert pair.ts_event == first + HOUR_NS
 
 
+def test_verified_catalog_gap_is_an_expected_session_closure() -> None:
+    spec = load_trend_pullback_spec(SPEC_PATH)
+    pairer = CompletedBarPairer(spec, verified_zero_unexplained_omissions=True)
+    first = START_NS + HOUR_NS
+    second = first + 49 * HOUR_NS
+    for timestamp in (first, second):
+        assert (
+            pairer.accept(
+                _native_bar(
+                    spec.data_semantics.signal_bid_bar_type,
+                    "1.1000",
+                    timestamp,
+                    timestamp,
+                )
+            )
+            is None
+        )
+        pair = pairer.accept(
+            _native_bar(
+                spec.data_semantics.signal_ask_bar_type,
+                "1.1002",
+                timestamp,
+                timestamp,
+            )
+        )
+        assert pair is not None
+        assert pair.contiguous
+
+
 def test_invalid_bid_ask_ordering_is_rejected() -> None:
     with pytest.raises(ValueError, match="ASK OHLC cannot be below BID"):
         CompletedPair(

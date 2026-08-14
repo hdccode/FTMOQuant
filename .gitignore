@@ -18,6 +18,7 @@ build/
 /data/
 /market-data/
 /catalog/
+/.artifacts/
 
 .env
 .DS_Store

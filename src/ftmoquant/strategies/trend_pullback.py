@@ -156,6 +156,24 @@ class ExitOrderIntent:
     target_price: Decimal
 
 
+@dataclass(frozen=True, slots=True)
+class CompletedTrade:
+    """Read-only native execution observation for G1.3 reporting."""
+
+    direction: Direction
+    entry_time_ns: int
+    exit_time_ns: int
+    entry_price: Decimal
+    exit_price: Decimal
+    quantity: Decimal
+    stop_distance: Decimal
+    initial_risk: Decimal
+    realized_pnl: Decimal
+    net_r: Decimal
+    commissions: Decimal
+    exit_reason: ExitReason
+
+
 StrategyAction = EntryOrderIntent | ExitOrderIntent
 
 
@@ -532,7 +550,12 @@ class _UnpairedBar:
 class CompletedBarPairer:
     """Fail-closed adapter from native side bars to synchronized pairs."""
 
-    def __init__(self, spec: TrendPullbackSpec) -> None:
+    def __init__(
+        self,
+        spec: TrendPullbackSpec,
+        *,
+        verified_zero_unexplained_omissions: bool = False,
+    ) -> None:
         instrument = spec.instrument.instrument_id
         self._types = {
             spec.data_semantics.signal_bid_bar_type: (Timeframe.HOUR, "BID"),
@@ -542,6 +565,7 @@ class CompletedBarPairer:
             f"{instrument}-1-MINUTE-BID-EXTERNAL": (Timeframe.MINUTE, "BID"),
             f"{instrument}-1-MINUTE-ASK-EXTERNAL": (Timeframe.MINUTE, "ASK"),
         }
+        self._verified_zero_unexplained_omissions = verified_zero_unexplained_omissions
         self._pending: dict[tuple[Timeframe, int], dict[str, Bar]] = {}
         self._last_event: dict[Timeframe, int] = {}
 
@@ -570,7 +594,11 @@ class CompletedBarPairer:
         del self._pending[key]
         bid = sides["BID"]
         ask = sides["ASK"]
-        contiguous = last is None or bar.ts_event - last == timeframe.interval_ns
+        contiguous = (
+            self._verified_zero_unexplained_omissions
+            or last is None
+            or bar.ts_event - last == timeframe.interval_ns
+        )
         try:
             pair = CompletedPair(
                 timeframe=timeframe,
@@ -595,8 +623,16 @@ class TrendPullbackStrategy(Strategy):
         spec_path: Path = DEFAULT_SPEC_PATH,
         research_ready: bool,
         trading_enabled: bool = False,
+        trading_start_ns: int | None = None,
+        verified_zero_unexplained_omissions: bool = False,
     ) -> TrendPullbackStrategy:
-        del spec_path, research_ready, trading_enabled
+        del (
+            spec_path,
+            research_ready,
+            trading_enabled,
+            trading_start_ns,
+            verified_zero_unexplained_omissions,
+        )
         return super().__new__(cls)
 
     def __init__(
@@ -605,6 +641,8 @@ class TrendPullbackStrategy(Strategy):
         spec_path: Path = DEFAULT_SPEC_PATH,
         research_ready: bool,
         trading_enabled: bool = False,
+        trading_start_ns: int | None = None,
+        verified_zero_unexplained_omissions: bool = False,
     ) -> None:
         super().__init__(
             StrategyConfig(
@@ -617,12 +655,39 @@ class TrendPullbackStrategy(Strategy):
         self.state_machine = TrendPullbackStateMachine(
             spec, trading_enabled=trading_enabled
         )
-        self._pairer = CompletedBarPairer(spec)
+        if verified_zero_unexplained_omissions and not research_ready:
+            raise ValueError("verified continuity requires research readiness")
+        self._pairer = CompletedBarPairer(
+            spec,
+            verified_zero_unexplained_omissions=(verified_zero_unexplained_omissions),
+        )
         self._research_ready = research_ready
+        if trading_enabled and trading_start_ns is not None:
+            raise ValueError("trading_start_ns cannot accompany trading_enabled")
+        self._trading_start_ns = trading_start_ns
         self._instrument_id = InstrumentId.from_str(spec.instrument.instrument_id)
         self._instrument: CurrencyPair | None = None
         self._entry_order_id: ClientOrderId | None = None
         self._entry_direction: Direction | None = None
+        self._entry_direction_for_record: Direction | None = None
+        self._entry_stop_distance: Decimal | None = None
+        self._entry_time_ns: int | None = None
+        self._entry_price: Decimal | None = None
+        self._entry_quantity: Decimal | None = None
+        self._trade_commissions = Decimal(0)
+        self._exit_price: Decimal | None = None
+        self._exit_reason: ExitReason | None = None
+        self.completed_trades: list[CompletedTrade] = []
+        self.pair_counts = {timeframe: 0 for timeframe in Timeframe}
+        self.entry_intent_count = 0
+        self.exit_intent_count = 0
+        self.entry_rejection_count = 0
+
+    @property
+    def required_bar_types(self) -> tuple[str, ...]:
+        """Expose the frozen subscriptions to a pre-filtering experiment loader."""
+
+        return self._pairer.bar_types
 
     def on_start(self) -> None:
         if not self._research_ready:
@@ -642,10 +707,20 @@ class TrendPullbackStrategy(Strategy):
         pair = self._pairer.accept(bar)
         if pair is None:
             return
+        self.pair_counts[pair.timeframe] += 1
+        if (
+            not self.state_machine.trading_enabled
+            and self._trading_start_ns is not None
+            and pair.info_time_ns >= self._trading_start_ns
+        ):
+            self.state_machine.enable_trading()
         for action in self.state_machine.on_pair(pair):
             if isinstance(action, EntryOrderIntent):
+                self.entry_intent_count += 1
                 self._submit_entry(action)
             else:
+                self.exit_intent_count += 1
+                self._exit_reason = action.reason
                 self.close_all_positions(self._instrument_id)
 
     def on_order_filled(self, event: OrderFilled) -> None:
@@ -654,12 +729,21 @@ class TrendPullbackStrategy(Strategy):
             or event.client_order_id != self._entry_order_id
             or self._entry_direction is None
         ):
+            if self._entry_price is not None:
+                self._exit_price = event.last_px.as_decimal()
+                if event.commission is not None:
+                    self._trade_commissions += event.commission.as_decimal()
             return
         self.state_machine.confirm_entry_fill(
             direction=self._entry_direction,
             fill_price=event.last_px.as_decimal(),
             fill_info_ns=event.ts_event,
         )
+        self._entry_time_ns = event.ts_event
+        self._entry_price = event.last_px.as_decimal()
+        self._entry_quantity = event.last_qty.as_decimal()
+        if event.commission is not None:
+            self._trade_commissions += event.commission.as_decimal()
         self._entry_order_id = None
         self._entry_direction = None
 
@@ -677,7 +761,47 @@ class TrendPullbackStrategy(Strategy):
 
     def on_position_closed(self, event: PositionClosed) -> None:
         if event.instrument_id == self._instrument_id:
+            if (
+                self._entry_direction_for_record is None
+                or self._entry_time_ns is None
+                or self._entry_price is None
+                or self._entry_quantity is None
+                or self._entry_stop_distance is None
+                or self._exit_price is None
+                or self._exit_reason is None
+                or event.realized_pnl is None
+                or event.ts_closed is None
+            ):
+                raise RuntimeError("closed position has incomplete G1.3 evidence")
+            initial_risk = self._entry_quantity * self._entry_stop_distance
+            if initial_risk <= 0:
+                raise RuntimeError("closed position has nonpositive initial risk")
+            realized_pnl = event.realized_pnl.as_decimal()
+            self.completed_trades.append(
+                CompletedTrade(
+                    direction=self._entry_direction_for_record,
+                    entry_time_ns=self._entry_time_ns,
+                    exit_time_ns=event.ts_closed,
+                    entry_price=self._entry_price,
+                    exit_price=self._exit_price,
+                    quantity=self._entry_quantity,
+                    stop_distance=self._entry_stop_distance,
+                    initial_risk=initial_risk,
+                    realized_pnl=realized_pnl,
+                    net_r=realized_pnl / initial_risk,
+                    commissions=self._trade_commissions,
+                    exit_reason=self._exit_reason,
+                )
+            )
             self.state_machine.confirm_flat()
+            self._entry_direction_for_record = None
+            self._entry_stop_distance = None
+            self._entry_time_ns = None
+            self._entry_price = None
+            self._entry_quantity = None
+            self._trade_commissions = Decimal(0)
+            self._exit_price = None
+            self._exit_reason = None
 
     def _submit_entry(self, intent: EntryOrderIntent) -> None:
         if self._instrument is None:
@@ -698,12 +822,17 @@ class TrendPullbackStrategy(Strategy):
         )
         self._entry_order_id = order.client_order_id
         self._entry_direction = intent.direction
+        self._entry_direction_for_record = intent.direction
+        self._entry_stop_distance = intent.stop_distance
         self.submit_order(order)
 
     def _reject_matching_entry(self, client_order_id: ClientOrderId) -> None:
         if self._entry_order_id == client_order_id:
+            self.entry_rejection_count += 1
             self._entry_order_id = None
             self._entry_direction = None
+            self._entry_direction_for_record = None
+            self._entry_stop_distance = None
             self.state_machine.reject_entry()
 
 
