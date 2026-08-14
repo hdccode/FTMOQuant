@@ -36,6 +36,7 @@ ftmoquant-freeze-universe-readiness = "ftmoquant.data.g1_4_cli:freeze_universe_m
 
 [dependency-groups]
 dev = [
+    "marimo==0.23.15",
     "mypy>=1.15",
     "pytest>=8.3",
     "ruff>=0.11",

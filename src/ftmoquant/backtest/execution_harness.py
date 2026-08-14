@@ -663,6 +663,12 @@ def _validate_profile(profile: ExecutionProfile) -> None:
                 raise ExecutionValidationError("invalid interest-rate record")
 
 
+def validate_execution_profile(profile: ExecutionProfile) -> None:
+    """Validate a reusable G0.7 execution profile without starting a run."""
+
+    _validate_profile(profile)
+
+
 def _validate_fee(config: FeeModelConfig) -> None:
     if config.kind in (FeeModelKind.FIXED, FeeModelKind.PER_CONTRACT):
         if config.commission is None or config.currency is None:

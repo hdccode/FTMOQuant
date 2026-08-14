@@ -762,3 +762,26 @@ therefore remain unobserved; tick-level compliance is outside this G0 fix.
   calibration, or live reconciliation.
 - Report generation requires pandas; it is installed directly instead of the
   broader Nautilus `visualization` extra.
+
+## G1.4B Stage G tournament infrastructure audit
+
+The targeted pre-implementation audit covered synchronized multi-instrument
+clocks, FX/currency exposure, portfolio limits, per-instrument costs,
+experiment registries, model-selection controls, and marimo. The adopted or
+referenced projects are:
+
+| Repository | Version / commit | License | Role and adoption | Modifications and validation |
+| --- | --- | --- | --- | --- |
+| [marimo-team/marimo](https://github.com/marimo-team/marimo/tree/0.23.15) | `marimo==0.23.15`; tag commit [`d8789daa177c759747fa2c36b985a7c36c37f048`](https://github.com/marimo-team/marimo/commit/d8789daa177c759747fa2c36b985a7c36c37f048) | Apache-2.0 | Development dependency and Git-tracked reactive UI only. No notebook runtime or source was copied. | The notebook calls tested FTMOQuant view-model modules and has fixed DEVELOPMENT mounts. Installed `marimo --version`, `marimo edit --help`, and `marimo run --help` verified the exact CLI. Static notebook checking and import tests validate integration. |
+| [nautechsystems/nautilus_trader](https://github.com/nautechsystems/nautilus_trader/tree/7f0e93dfa3f09ca165a5f3292a45fafbb5681561) | Existing pinned `nautilus-trader==2.0.0rc2`; reviewed source commit `7f0e93dfa3f09ca165a5f3292a45fafbb5681561` | LGPL-3.0-or-later | Existing deterministic engine, native BID/ASK execution, fee, adverse-slippage, latency, and FX rollover boundary. Referenced for multi-instrument deterministic time and currency-aware domain modeling. | No upstream code copied and no second engine added. Stage G adds a public validation-only wrapper for the existing `ExecutionProfile`, then binds one validated profile per instrument with observed BID/ASK spread. Synthetic tests validate order, cost configuration, and causal alignment. |
+| [bashtage/arch](https://github.com/bashtage/arch/tree/v8.0.0) | Existing pinned `arch==8.0.0`, tag `v8.0.0` | NCSA | Existing SPA, Reality Check, MCS, stationary bootstrap, and optimal block-length infrastructure. | No upstream code copied or modified. Stage G preregisters how the already-tested wrappers will be used later; it performs no model comparison or return calculation now. |
+
+NautilusTrader deliberately remains the execution realism dependency, while
+`arch` remains the multiple-comparison dependency. External experiment trackers
+and portfolio/backtest frameworks were not adopted: the required registry is a
+small immutable six-entry metadata contract, and adding MLflow, Sacred,
+vectorbt, Backtrader, LEAN, or another portfolio engine would duplicate pinned
+project facilities without improving the leakage boundary. Currency-incidence
+aggregation and DEVELOPMENT manifest validation are narrow FTMOQuant seams not
+provided by the pinned versions with the required frozen hashes and fail-closed
+split policy.
