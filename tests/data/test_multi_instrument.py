@@ -320,6 +320,160 @@ def test_generic_correction_accepts_only_direct_tick_evidence() -> None:
     }
 
 
+def test_generic_correction_rebuilds_disjoint_catalog_intervals(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    start = datetime(2019, 3, 11, tzinfo=UTC)
+    corrections_at = (start + timedelta(minutes=3), start + timedelta(minutes=11))
+    parent_times = tuple(
+        start + timedelta(minutes=index)
+        for index in range(15)
+        if start + timedelta(minutes=index) not in corrections_at
+    )
+    parent_root = tmp_path / "parent"
+    catalog_path = parent_root / "catalog"
+    catalog_path.mkdir(parents=True)
+    parent_catalog = ParquetDataCatalog(str(catalog_path))
+    parent_catalog.write_instruments([GBPUSD_SPEC.nautilus_instrument()])
+    parent_pairs = {
+        timestamp: _gbp_source_pair(timestamp, Decimal(index))
+        for index, timestamp in enumerate(parent_times)
+    }
+    for side, index in (("BID", 0), ("ASK", 1)):
+        parent_catalog.write_bars(
+            to_nautilus_bars(
+                [parent_pairs[timestamp][index] for timestamp in parent_times],
+                side,
+                GBPUSD_SPEC,
+            )
+        )
+    _write_semantic(
+        parent_root / "ftmoquant_provenance.json",
+        {
+            "requested_utc_range": {
+                "start_date": "2019-03-11",
+                "end_date_inclusive": "2019-03-11",
+            },
+            "qa": {
+                "bid_bar_count": len(parent_times),
+                "ask_bar_count": len(parent_times),
+            },
+        },
+    )
+    _write_semantic(
+        parent_root / "ftmoquant_session_reconciliation.json",
+        {
+            "instrument_id": GBPUSD_SPEC.instrument_id,
+            "permitted_utc_interval": {
+                "end_exclusive_utc": "2024-08-21T00:00:00Z"
+            },
+            "unexplained_missing_intervals_utc": [
+                {
+                    "start_utc": timestamp.isoformat().replace("+00:00", "Z"),
+                    "end_utc": timestamp.isoformat().replace("+00:00", "Z"),
+                    "missing_sides": ["BID", "ASK"],
+                    "reason": "independent_direct_source_contains_tick",
+                    "evidence_refs": ["cached-bi5"],
+                }
+                for timestamp in corrections_at
+            ],
+        },
+    )
+    monkeypatch.setattr(
+        universe_readiness,
+        "validate_canonical_source_manifest",
+        lambda *_args: SimpleNamespace(ingestion_version=hf.HF_INGESTION_VERSION),
+    )
+    monkeypatch.setattr(universe_readiness, "_SCAN_MINUTES", 5)
+    correction_pairs = {
+        timestamp: _gbp_source_pair(timestamp, Decimal("100") + index)
+        for index, timestamp in enumerate(corrections_at)
+    }
+
+    child_root = tmp_path / "child"
+    universe_readiness.build_corrected_instrument_dataset(
+        GBPUSD_SPEC, parent_root, child_root, correction_pairs
+    )
+
+    child = ParquetDataCatalog(str(child_root / "catalog"))
+    expected_times = tuple(sorted((*parent_times, *corrections_at)))
+    correction_ns = {
+        int(timestamp.timestamp() * 1_000_000_000) for timestamp in corrections_at
+    }
+    for side, index in (("BID", 0), ("ASK", 1)):
+        identifier = GBPUSD_SPEC.bar_type(minutes=1, side=side, aggregation="EXTERNAL")
+        bars = tuple(child.query_bars([identifier]))
+        assert tuple(bar.ts_event for bar in bars) == tuple(
+            int(timestamp.timestamp() * 1_000_000_000) for timestamp in expected_times
+        )
+        expected_parent = to_nautilus_bars(
+            [parent_pairs[timestamp][index] for timestamp in parent_times],
+            side,
+            GBPUSD_SPEC,
+        )
+        assert tuple(bar for bar in bars if bar.ts_event not in correction_ns) == tuple(
+            expected_parent
+        )
+
+    with pytest.raises(UniverseReadinessValidationError, match="already exists"):
+        universe_readiness.build_corrected_instrument_dataset(
+            GBPUSD_SPEC, parent_root, child_root, correction_pairs
+        )
+    with pytest.raises(UniverseReadinessValidationError, match="must equal"):
+        universe_readiness.build_corrected_instrument_dataset(
+            GBPUSD_SPEC, parent_root, tmp_path / "mismatch", {}
+        )
+    partial_root = tmp_path / "partial"
+    partial_root.mkdir()
+    with pytest.raises(UniverseReadinessValidationError, match="already exists"):
+        universe_readiness.build_corrected_instrument_dataset(
+            GBPUSD_SPEC, parent_root, partial_root, correction_pairs
+        )
+    with pytest.raises(
+        hf.HfDukascopyValidationError, match="direct BI5 hour is not verified"
+    ):
+        universe_readiness.build_cached_corrected_instrument_dataset(
+            GBPUSD_SPEC, parent_root, tmp_path / "missing-cache", tmp_path / "cache"
+        )
+    holdout = datetime(2024, 8, 21, tzinfo=UTC)
+    _write_semantic(
+        parent_root / "ftmoquant_session_reconciliation.json",
+        {
+            "instrument_id": GBPUSD_SPEC.instrument_id,
+            "permitted_utc_interval": {
+                "end_exclusive_utc": "2024-08-21T00:00:00Z"
+            },
+            "unexplained_missing_intervals_utc": [
+                {
+                    "start_utc": "2024-08-21T00:00:00Z",
+                    "end_utc": "2024-08-21T00:00:00Z",
+                    "missing_sides": ["BID", "ASK"],
+                    "reason": "independent_direct_source_contains_tick",
+                    "evidence_refs": ["cached-bi5"],
+                }
+            ],
+        },
+    )
+    with pytest.raises(UniverseReadinessValidationError, match="holdout cutoff"):
+        universe_readiness.build_corrected_instrument_dataset(
+            GBPUSD_SPEC,
+            parent_root,
+            tmp_path / "holdout",
+            {holdout: _gbp_source_pair(holdout, Decimal("9"))},
+        )
+
+
+def _gbp_source_pair(
+    timestamp: datetime, offset: Decimal
+) -> tuple[SourceBar, SourceBar]:
+    bid = Decimal("1.25000") + offset / Decimal("100000")
+    ask = bid + Decimal("0.00020")
+    return (
+        SourceBar(timestamp, bid, bid, bid, bid, Decimal("1")),
+        SourceBar(timestamp, ask, ask, ask, ask, Decimal("1")),
+    )
+
+
 def test_universe_freeze_is_ordered_path_independent_and_fail_closed(
     tmp_path: Path,
 ) -> None:

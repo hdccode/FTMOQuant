@@ -103,7 +103,7 @@ def build_corrected_instrument_dataset(
     output = output_root.resolve()
     if output.exists() or parent == output or parent in output.parents:
         raise UniverseReadinessValidationError(
-            "correction output must be a new disjoint immutable root"
+            "correction output already exists; provide a new empty immutable root"
         )
     parent_manifest_path = parent / PARENT_MANIFEST_FILENAME
     reconciliation_path = parent / RECONCILIATION_MANIFEST_FILENAME
@@ -126,6 +126,7 @@ def build_corrected_instrument_dataset(
         raise UniverseReadinessValidationError("correction reaches the holdout cutoff")
 
     parent_catalog = ParquetDataCatalog(str(parent / "catalog"))
+    parent_tree_before = _sha256_tree(parent)
     output.mkdir(parents=True)
     output_catalog_path = output / "catalog"
     output_catalog_path.mkdir()
@@ -134,31 +135,44 @@ def build_corrected_instrument_dataset(
     if len(instruments) != 1:
         raise UniverseReadinessValidationError("parent catalog instrument is missing")
     destination.write_instruments(instruments)
-    start_ns, end_ns = _manifest_range_ns(parent_manifest)
-    correction_ns = {int(item.timestamp() * 1_000_000_000) for item in expected}
-    copied = 0
-    for chunk in iter_paired_source_chunks(
+    ordered = sorted(corrections.items())
+    _validate_correction_pairs(ordered, instrument_spec)
+    additions = {
+        "BID": {
+            _ns(timestamp): bar
+            for timestamp, bar in zip(
+                sorted(expected),
+                to_nautilus_bars(
+                    [pair[0] for _, pair in ordered], "BID", instrument_spec
+                ),
+                strict=True,
+            )
+        },
+        "ASK": {
+            _ns(timestamp): bar
+            for timestamp, bar in zip(
+                sorted(expected),
+                to_nautilus_bars(
+                    [pair[1] for _, pair in ordered], "ASK", instrument_spec
+                ),
+                strict=True,
+            )
+        },
+    }
+    copied = _populate_corrected_instrument_catalog(
         parent_catalog,
+        destination,
         parent_manifest,
         instrument_spec,
-        start_ns,
-        end_ns,
-        chunk_minutes=_SCAN_MINUTES,
-    ):
-        if any(bar.ts_event in correction_ns for bar in chunk.bid_bars):
-            raise UniverseReadinessValidationError(
-                "parent already contains a correction"
-            )
-        if chunk.bid_bars:
-            destination.write_bars(chunk.bid_bars)
-            destination.write_bars(chunk.ask_bars)
-            copied += len(chunk.bid_bars)
-    ordered = sorted(corrections.items())
-    bid_rows = [pair[0] for _, pair in ordered]
-    ask_rows = [pair[1] for _, pair in ordered]
-    _validate_correction_pairs(ordered, instrument_spec)
-    destination.write_bars(to_nautilus_bars(bid_rows, "BID", instrument_spec))
-    destination.write_bars(to_nautilus_bars(ask_rows, "ASK", instrument_spec))
+        additions,
+    )
+    equivalence = _prove_instrument_parent_equivalence(
+        parent_catalog,
+        destination,
+        parent_manifest,
+        instrument_spec,
+        additions,
+    )
 
     correction_payload = {
         "identity": GENERIC_CORRECTION_VERSION,
@@ -187,14 +201,7 @@ def build_corrected_instrument_dataset(
             "ingestion_version": identity.ingestion_version,
         },
         "correction": correction,
-        "parent_equivalence": {
-            "parent_bid_bars_unchanged": True,
-            "parent_ask_bars_unchanged": True,
-            "parent_timestamps_removed": 0,
-            "new_bid_timestamp_count": len(expected),
-            "new_ask_timestamp_count": len(expected),
-            "other_changed_or_added_bar_count": 0,
-        },
+        "parent_equivalence": equivalence,
         "qa": {
             **cast(dict[str, Any], parent_manifest["qa"]),
             "bid_bar_count": copied + len(expected),
@@ -210,7 +217,127 @@ def build_corrected_instrument_dataset(
         + "\n",
         encoding="utf-8",
     )
+    if _sha256_tree(parent) != parent_tree_before:
+        raise UniverseReadinessValidationError(
+            "parent dataset changed during correction build"
+        )
     return path
+
+
+def _populate_corrected_instrument_catalog(
+    parent: ParquetDataCatalog,
+    destination: ParquetDataCatalog,
+    parent_manifest: dict[str, Any],
+    instrument: InstrumentSpec,
+    additions: Mapping[str, Mapping[int, Any]],
+) -> int:
+    """Write one disjoint, ordered child interval for each bounded source range."""
+
+    start_ns, end_ns = _manifest_range_ns(parent_manifest)
+    written: dict[str, set[int]] = {side: set() for side in ("BID", "ASK")}
+    copied = 0
+    for chunk in iter_paired_source_chunks(
+        parent,
+        instrument=instrument,
+        manifest=parent_manifest,
+        start_ns=start_ns,
+        end_ns=end_ns,
+        chunk_minutes=_SCAN_MINUTES,
+    ):
+        source = {"BID": chunk.bid_bars, "ASK": chunk.ask_bars}
+        for side in ("BID", "ASK"):
+            added = {
+                timestamp: bar
+                for timestamp, bar in additions[side].items()
+                if chunk.start_ns <= timestamp < chunk.end_ns
+            }
+            combined = tuple(
+                sorted((*source[side], *added.values()), key=lambda bar: bar.ts_event)
+            )
+            if len({bar.ts_event for bar in combined}) != len(combined):
+                raise UniverseReadinessValidationError(
+                    f"parent already contains a correction {side} timestamp"
+                )
+            if combined:
+                destination.write_bars(combined)
+            written[side].update(added)
+        copied += len(chunk.bid_bars)
+    if any(written[side] != set(additions[side]) for side in ("BID", "ASK")):
+        raise UniverseReadinessValidationError(
+            "correction write omitted a required minute"
+        )
+    return copied
+
+
+def _prove_instrument_parent_equivalence(
+    parent: ParquetDataCatalog,
+    corrected: ParquetDataCatalog,
+    parent_manifest: dict[str, Any],
+    instrument: InstrumentSpec,
+    additions: Mapping[str, Mapping[int, Any]],
+) -> dict[str, Any]:
+    """Prove that the child adds only the exact correction set."""
+
+    start_ns, end_ns = _manifest_range_ns(parent_manifest)
+    unchanged = {side: 0 for side in ("BID", "ASK")}
+    extra = {side: 0 for side in ("BID", "ASK")}
+    for chunk in iter_paired_source_chunks(
+        parent,
+        instrument=instrument,
+        manifest=parent_manifest,
+        start_ns=start_ns,
+        end_ns=end_ns,
+        chunk_minutes=_SCAN_MINUTES,
+    ):
+        source = {"BID": chunk.bid_bars, "ASK": chunk.ask_bars}
+        for side in ("BID", "ASK"):
+            identifier = instrument.bar_type(
+                minutes=1, side=side, aggregation="EXTERNAL"
+            )
+            child = tuple(
+                bar
+                for bar in corrected.query_bars(
+                    [identifier], start=chunk.start_ns, end=chunk.end_ns
+                )
+                if chunk.start_ns <= bar.ts_event < chunk.end_ns
+            )
+            child_by_time = {bar.ts_event: bar for bar in child}
+            if len(child_by_time) != len(child):
+                raise UniverseReadinessValidationError(
+                    f"corrected {side} series contains duplicate timestamps"
+                )
+            parent_times = {bar.ts_event for bar in source[side]}
+            for bar in source[side]:
+                if child_by_time.get(bar.ts_event) != bar:
+                    raise UniverseReadinessValidationError(
+                        f"parent {side} bar changed or disappeared"
+                    )
+                unchanged[side] += 1
+            for timestamp, bar in child_by_time.items():
+                if timestamp not in parent_times:
+                    if additions[side].get(timestamp) != bar:
+                        raise UniverseReadinessValidationError(
+                            f"unexpected corrected {side} bar appeared"
+                        )
+                    extra[side] += 1
+    qa = cast(dict[str, Any], parent_manifest["qa"])
+    if any(
+        unchanged[side] != qa[f"{side.lower()}_bar_count"]
+        or extra[side] != len(additions[side])
+        for side in ("BID", "ASK")
+    ):
+        raise UniverseReadinessValidationError(
+            "parent/correction bar counts do not prove exact equivalence"
+        )
+    return {
+        "parent_bid_bars_unchanged": True,
+        "parent_ask_bars_unchanged": True,
+        "parent_timestamps_removed": 0,
+        "new_bid_timestamp_count": extra["BID"],
+        "new_ask_timestamp_count": extra["ASK"],
+        "other_changed_or_added_bar_count": 0,
+        "parent_counts": unchanged,
+    }
 
 
 def build_cached_corrected_instrument_dataset(
