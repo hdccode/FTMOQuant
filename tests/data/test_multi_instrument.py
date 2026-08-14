@@ -39,6 +39,7 @@ from ftmoquant.data.universe_plan import (
 from ftmoquant.data.universe_readiness import (
     INSTRUMENT_READINESS_FILENAME,
     UniverseReadinessValidationError,
+    freeze_instrument_readiness,
     freeze_universe_readiness,
 )
 
@@ -332,6 +333,111 @@ def test_universe_freeze_is_ordered_path_independent_and_fail_closed(
             {"EUR/USD.DUKASCOPY": roots["EUR/USD.DUKASCOPY"]},
             tmp_path / "failed",
         )
+
+
+def test_instrument_readiness_can_seal_outside_immutable_artifact_root(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    plan = load_research_universe_plan(PLAN)
+    instrument_id = "EUR/USD.DUKASCOPY"
+    artifact_root = tmp_path / "legacy-artifact"
+    split_root = tmp_path / "splits"
+    readiness_root = tmp_path / "readiness-reference"
+    (artifact_root / "catalog").mkdir(parents=True)
+
+    canonical = {"instrument_id": instrument_id, "qa": {"holdout_rows_admitted": 0}}
+    _write_semantic(artifact_root / "ftmoquant_provenance.json", canonical)
+    canonical_sha = hashlib.sha256(
+        (artifact_root / "ftmoquant_provenance.json").read_bytes()
+    ).hexdigest()
+    derived = {
+        "instrument_id": instrument_id,
+        "parent_g0_5_manifest_sha256": canonical_sha,
+        "derived_bar_integrity_valid": True,
+    }
+    (artifact_root / "ftmoquant_derived_provenance.json").write_text(
+        json.dumps(derived), encoding="utf-8"
+    )
+    derived_sha = hashlib.sha256(
+        (artifact_root / "ftmoquant_derived_provenance.json").read_bytes()
+    ).hexdigest()
+    permitted = {
+        "start_utc": "2019-03-11T00:00:00Z",
+        "end_exclusive_utc": "2024-08-21T00:00:00Z",
+    }
+    _write_semantic(
+        artifact_root / "ftmoquant_session_coverage.json",
+        {
+            "instrument_id": instrument_id,
+            "requested_utc_interval": permitted,
+            "parent_g0_5_manifest_sha256": canonical_sha,
+            "structural_g0_6_manifest_sha256": derived_sha,
+            "source_derived_structural_integrity_valid": True,
+        },
+    )
+    _write_semantic(
+        artifact_root / "ftmoquant_session_reconciliation.json",
+        {
+            "instrument_id": instrument_id,
+            "permitted_utc_interval": permitted,
+            "session_aware_research_ready": True,
+            "counts": {"unexplained_missing_minute_count": 0},
+            "holdout_rows_admitted": 0,
+            "holdout_accessed": False,
+        },
+    )
+    empty_tree_sha = universe_readiness._sha256_tree(artifact_root / "catalog")
+    for name, interval in (
+        (
+            "development",
+            {
+                "start_utc": "2019-03-11T00:00:00Z",
+                "end_exclusive_utc": "2023-04-11T00:00:00Z",
+            },
+        ),
+        (
+            "validation",
+            {
+                "start_utc": "2023-04-11T00:00:00Z",
+                "end_exclusive_utc": "2024-08-21T00:00:00Z",
+            },
+        ),
+    ):
+        catalog = split_root / name / "catalog"
+        catalog.mkdir(parents=True)
+        _write_semantic(
+            split_root / name / "ftmoquant_split_view.json",
+            {
+                "instrument_id": instrument_id,
+                "holdout_rows": 0,
+                "universe_plan_sha256": plan.semantic_sha256,
+                "range": interval,
+                "catalog_tree_sha256": empty_tree_sha,
+            },
+        )
+    monkeypatch.setattr(
+        universe_readiness, "validate_canonical_source_manifest", lambda *_args: None
+    )
+    monkeypatch.setattr(
+        universe_readiness,
+        "_manifest_range_ns",
+        lambda _document: (
+            int(plan.permitted_start_utc.timestamp() * 1_000_000_000),
+            int(plan.permitted_end_exclusive_utc.timestamp() * 1_000_000_000),
+        ),
+    )
+
+    result = freeze_instrument_readiness(
+        PLAN,
+        instrument_id,
+        artifact_root,
+        split_root,
+        readiness_output_root=readiness_root,
+    )
+
+    assert result.instrument_id == instrument_id
+    assert (readiness_root / INSTRUMENT_READINESS_FILENAME).is_file()
+    assert not (artifact_root / INSTRUMENT_READINESS_FILENAME).exists()
 
 
 def _readiness_document(plan_sha: str, instrument_id: str) -> dict[str, Any]:

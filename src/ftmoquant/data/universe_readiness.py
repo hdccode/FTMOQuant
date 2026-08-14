@@ -319,8 +319,15 @@ def freeze_instrument_readiness(
     instrument_id: str,
     artifact_root: Path,
     split_root: Path,
+    *,
+    readiness_output_root: Path | None = None,
 ) -> InstrumentArtifactRef:
-    """Seal one instrument only after every data and holdout gate passes."""
+    """Seal one instrument only after every data and holdout gate passes.
+
+    ``readiness_output_root`` permits a path-independent readiness reference to be
+    written outside a legacy immutable artifact root.  The referenced artifact
+    and catalog hashes are still computed exclusively from ``artifact_root``.
+    """
 
     plan = load_research_universe_plan(plan_path)
     instrument = plan.instrument(instrument_id)
@@ -459,7 +466,11 @@ def freeze_instrument_readiness(
         "strategy_return_accessed": False,
     }
     semantic = _semantic_sha256(payload)
-    path = root / INSTRUMENT_READINESS_FILENAME
+    readiness_root = (
+        root if readiness_output_root is None else readiness_output_root.resolve()
+    )
+    readiness_root.mkdir(parents=True, exist_ok=True)
+    path = readiness_root / INSTRUMENT_READINESS_FILENAME
     encoded = (
         json.dumps({**payload, "semantic_sha256": semantic}, indent=2, sort_keys=True)
         + "\n"
