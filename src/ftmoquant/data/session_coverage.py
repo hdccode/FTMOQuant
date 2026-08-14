@@ -6,7 +6,7 @@ import argparse
 import hashlib
 import json
 from collections.abc import Sequence
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, field
 from datetime import UTC, date, datetime, time, timedelta
 from pathlib import Path
 from typing import Any, cast
@@ -17,6 +17,7 @@ from nautilus_trader.persistence import ParquetDataCatalog
 
 from ftmoquant.data.canonical_source import (
     CanonicalSourceValidationError,
+    iter_paired_eurusd_source_chunks,
     validate_canonical_eurusd_source_manifest,
 )
 from ftmoquant.data.derived_bars import (
@@ -44,6 +45,7 @@ _CLASS_EXPECTED_CLOSED = "expected_market_closed"
 _CLASS_UNEXPLAINED = "unexplained_missing"
 _NEW_YORK_CLOSE = time(17, 0)
 _SESSION_ZONE = ZoneInfo(SESSION_TIMEZONE)
+_SOURCE_QUERY_CHUNK_MINUTES = 10_000
 
 _AUTHORITATIVE_SOURCES: tuple[dict[str, str], ...] = (
     {
@@ -120,6 +122,22 @@ class SessionCoverageResult:
     semantic_sha256: str
 
 
+@dataclass(slots=True)
+class _CoverageAccumulator:
+    """Constant-size classification state carried between catalog chunks."""
+
+    start: datetime
+    end: datetime
+    next_minute: datetime
+    expected_open_count: int = 0
+    paired_count: int = 0
+    paired_open_count: int = 0
+    expected_closed_count: int = 0
+    unexplained_count: int = 0
+    intervals: list[CoverageInterval] = field(default_factory=list)
+    active: tuple[str, tuple[str, ...], datetime, datetime] | None = None
+
+
 def is_eurusd_expected_open(timestamp: datetime) -> bool:
     """Return whether a UTC minute is inside Dukascopy's recurring FX week."""
 
@@ -157,76 +175,11 @@ def assess_eurusd_source_coverage(
             "the requested interval predates authoritative session policy support"
         )
 
-    bids = _timestamp_set(bid_timestamps, start, end, "BID")
-    asks = _timestamp_set(ask_timestamps, start, end, "ASK")
-    paired = bids & asks
-
-    expected_open_count = 0
-    paired_open_count = 0
-    expected_closed_count = 0
-    unexplained_count = 0
-    intervals: list[CoverageInterval] = []
-    active: tuple[str, tuple[str, ...], datetime, datetime] | None = None
-
-    current = start
-    while current < end:
-        expected_open = is_eurusd_expected_open(current)
-        if expected_open:
-            expected_open_count += 1
-        if current in paired:
-            if expected_open:
-                paired_open_count += 1
-            if active is not None:
-                intervals.append(_coverage_interval(*active))
-                active = None
-        else:
-            classification = (
-                _CLASS_UNEXPLAINED if expected_open else _CLASS_EXPECTED_CLOSED
-            )
-            missing_sides = tuple(
-                side
-                for side, observed in (("BID", bids), ("ASK", asks))
-                if current not in observed
-            )
-            if classification == _CLASS_UNEXPLAINED:
-                unexplained_count += 1
-            else:
-                expected_closed_count += 1
-            if (
-                active is not None
-                and active[0] == classification
-                and active[1] == missing_sides
-                and current == active[3] + _MINUTE
-            ):
-                active = (active[0], active[1], active[2], current)
-            else:
-                if active is not None:
-                    intervals.append(_coverage_interval(*active))
-                active = (classification, missing_sides, current, current)
-        current += _MINUTE
-
-    if active is not None:
-        intervals.append(_coverage_interval(*active))
-    requested_count = int((end - start) / _MINUTE)
-    if len(paired) + expected_closed_count + unexplained_count != requested_count:
-        raise AssertionError("coverage classification does not partition the request")
-
-    return CoverageAssessment(
-        requested_start_utc=_format_utc(start),
-        requested_end_exclusive_utc=_format_utc(end),
-        requested_minute_count=requested_count,
-        expected_open_minute_count=expected_open_count,
-        observed_paired_minute_count=len(paired),
-        observed_paired_expected_open_minute_count=paired_open_count,
-        expected_closure_minute_count=expected_closed_count,
-        unexplained_missing_minute_count=unexplained_count,
-        expected_closure_intervals=tuple(
-            item for item in intervals if item.classification == _CLASS_EXPECTED_CLOSED
-        ),
-        unexplained_missing_intervals=tuple(
-            item for item in intervals if item.classification == _CLASS_UNEXPLAINED
-        ),
-    )
+    bids = _validate_timestamp_sequence(bid_timestamps, start, end, "BID")
+    asks = _validate_timestamp_sequence(ask_timestamps, start, end, "ASK")
+    accumulator = _CoverageAccumulator(start=start, end=end, next_minute=start)
+    _process_coverage_chunk(accumulator, start, end, bids, asks)
+    return _finish_coverage(accumulator)
 
 
 def run_eurusd_session_coverage_qa(output_root: Path) -> SessionCoverageResult:
@@ -243,21 +196,34 @@ def run_eurusd_session_coverage_qa(output_root: Path) -> SessionCoverageResult:
         raise CoverageValidationError(f"missing G0.5 catalog: {catalog_path}")
 
     catalog = ParquetDataCatalog(str(catalog_path))
-    sources = {
-        side: tuple(catalog.query_bars([_source_bar_type(side)])) for side in _SIDES
-    }
-    _validate_source_bars(sources, parent, start, end)
-    assessment = assess_eurusd_source_coverage(
-        start,
-        end,
-        tuple(_bar_timestamp(bar) for bar in sources["BID"]),
-        tuple(_bar_timestamp(bar) for bar in sources["ASK"]),
-    )
+    accumulator = _CoverageAccumulator(start=start, end=end, next_minute=start)
+    try:
+        chunks = iter_paired_eurusd_source_chunks(
+            catalog,
+            parent,
+            _datetime_ns(start),
+            _datetime_ns(end),
+            chunk_minutes=_SOURCE_QUERY_CHUNK_MINUTES,
+        )
+        for chunk in chunks:
+            chunk_start = _bar_ns_datetime(chunk.start_ns)
+            chunk_end = _bar_ns_datetime(chunk.end_ns)
+            _process_coverage_chunk(
+                accumulator,
+                chunk_start,
+                chunk_end,
+                tuple(_bar_timestamp(bar) for bar in chunk.bid_bars),
+                tuple(_bar_timestamp(bar) for bar in chunk.ask_bars),
+            )
+    except CanonicalSourceValidationError as error:
+        raise CoverageValidationError(str(error)) from error
+    assessment = _finish_coverage(accumulator)
+    source_counts = _source_counts_from_manifest(parent)
 
     parent_sha256 = _sha256(parent_path)
     derived = _load_json_object(derived_path, "G0.6 derived manifest")
     structural_valid = _derived_structure_valid(
-        derived, parent_sha256, sources, parent_ingestion_version
+        derived, parent_sha256, source_counts, parent_ingestion_version
     )
     payload = _coverage_manifest(
         assessment=assessment,
@@ -405,56 +371,156 @@ def _requested_interval(manifest: dict[str, Any]) -> tuple[datetime, datetime]:
     return start, end
 
 
-def _validate_source_bars(
-    sources: dict[str, tuple[Bar, ...]],
-    parent: dict[str, Any],
+def _process_coverage_chunk(
+    accumulator: _CoverageAccumulator,
     start: datetime,
     end: datetime,
+    bid_timestamps: Sequence[datetime],
+    ask_timestamps: Sequence[datetime],
 ) -> None:
+    start = _validate_utc_minute(start, "coverage chunk start")
+    end = _validate_utc_minute(end, "coverage chunk end")
+    if start != accumulator.next_minute or end <= start or end > accumulator.end:
+        raise CoverageValidationError("coverage chunks are not contiguous and ordered")
+    bids = _validate_timestamp_sequence(bid_timestamps, start, end, "BID")
+    asks = _validate_timestamp_sequence(ask_timestamps, start, end, "ASK")
+    bid_index = 0
+    ask_index = 0
+    current = start
+    while current < end:
+        bid_observed = bid_index < len(bids) and bids[bid_index] == current
+        ask_observed = ask_index < len(asks) and asks[ask_index] == current
+        if bid_observed:
+            bid_index += 1
+        if ask_observed:
+            ask_index += 1
+        expected_open = is_eurusd_expected_open(current)
+        if expected_open:
+            accumulator.expected_open_count += 1
+        if bid_observed and ask_observed:
+            accumulator.paired_count += 1
+            if expected_open:
+                accumulator.paired_open_count += 1
+            _close_active_interval(accumulator)
+        else:
+            classification = (
+                _CLASS_UNEXPLAINED if expected_open else _CLASS_EXPECTED_CLOSED
+            )
+            missing_sides = tuple(
+                side
+                for side, observed in (
+                    ("BID", bid_observed),
+                    ("ASK", ask_observed),
+                )
+                if not observed
+            )
+            if classification == _CLASS_UNEXPLAINED:
+                accumulator.unexplained_count += 1
+            else:
+                accumulator.expected_closed_count += 1
+            active = accumulator.active
+            if (
+                active is not None
+                and active[0] == classification
+                and active[1] == missing_sides
+                and current == active[3] + _MINUTE
+            ):
+                accumulator.active = (active[0], active[1], active[2], current)
+            else:
+                _close_active_interval(accumulator)
+                accumulator.active = (
+                    classification,
+                    missing_sides,
+                    current,
+                    current,
+                )
+        current += _MINUTE
+    if bid_index != len(bids) or ask_index != len(asks):
+        raise CoverageValidationError("coverage chunk contains unconsumed timestamps")
+    accumulator.next_minute = end
+
+
+def _finish_coverage(accumulator: _CoverageAccumulator) -> CoverageAssessment:
+    if accumulator.next_minute != accumulator.end:
+        raise CoverageValidationError("coverage scan did not reach the requested end")
+    _close_active_interval(accumulator)
+    requested_count = int((accumulator.end - accumulator.start) / _MINUTE)
+    if (
+        accumulator.paired_count
+        + accumulator.expected_closed_count
+        + accumulator.unexplained_count
+        != requested_count
+    ):
+        raise AssertionError("coverage classification does not partition the request")
+    return CoverageAssessment(
+        requested_start_utc=_format_utc(accumulator.start),
+        requested_end_exclusive_utc=_format_utc(accumulator.end),
+        requested_minute_count=requested_count,
+        expected_open_minute_count=accumulator.expected_open_count,
+        observed_paired_minute_count=accumulator.paired_count,
+        observed_paired_expected_open_minute_count=accumulator.paired_open_count,
+        expected_closure_minute_count=accumulator.expected_closed_count,
+        unexplained_missing_minute_count=accumulator.unexplained_count,
+        expected_closure_intervals=tuple(
+            item
+            for item in accumulator.intervals
+            if item.classification == _CLASS_EXPECTED_CLOSED
+        ),
+        unexplained_missing_intervals=tuple(
+            item
+            for item in accumulator.intervals
+            if item.classification == _CLASS_UNEXPLAINED
+        ),
+    )
+
+
+def _close_active_interval(accumulator: _CoverageAccumulator) -> None:
+    if accumulator.active is not None:
+        accumulator.intervals.append(_coverage_interval(*accumulator.active))
+        accumulator.active = None
+
+
+def _validate_timestamp_sequence(
+    values: Sequence[datetime],
+    start: datetime,
+    end: datetime,
+    side: str,
+) -> tuple[datetime, ...]:
+    normalized = sorted(
+        _validate_utc_minute(value, f"{side} timestamp") for value in values
+    )
+    for timestamp in normalized:
+        if not start <= timestamp < end:
+            raise CoverageValidationError(
+                f"{side} timestamp is outside the requested UTC interval"
+            )
+    if any(
+        current == previous for previous, current in zip(normalized, normalized[1:])
+    ):
+        raise CoverageValidationError(f"{side} timestamps contain duplicates")
+    return tuple(normalized)
+
+
+def _source_counts_from_manifest(parent: dict[str, Any]) -> dict[str, int]:
     qa_raw = parent.get("qa")
     if not isinstance(qa_raw, dict):
-        raise CoverageValidationError("G0.5 source manifest has invalid qa")
+        raise CoverageValidationError("canonical source manifest has invalid qa")
     qa = cast(dict[str, Any], qa_raw)
-    timestamps: dict[str, tuple[int, ...]] = {}
+    counts: dict[str, int] = {}
     for side in _SIDES:
-        bars = sources[side]
-        if not bars:
-            raise CoverageValidationError(f"G0.5 {side} source series is empty")
-        if qa.get(f"{side.lower()}_bar_count") != len(bars):
+        value = qa.get(f"{side.lower()}_bar_count")
+        if not isinstance(value, int) or isinstance(value, bool) or value <= 0:
             raise CoverageValidationError(
-                f"{side} catalog count does not match the G0.5 source manifest"
+                f"canonical source manifest has invalid {side} count"
             )
-        previous: int | None = None
-        for bar in bars:
-            if str(bar.bar_type) != _source_bar_type(side):
-                raise CoverageValidationError(f"catalog contains an invalid {side} bar")
-            if bar.ts_event % _MINUTE_NS != 0:
-                raise CoverageValidationError(
-                    f"{side} source bar is not minute aligned"
-                )
-            if bar.ts_init != bar.ts_event + _MINUTE_NS:
-                raise CoverageValidationError(
-                    f"{side} source bar violates G0.5 timestamp semantics"
-                )
-            if previous is not None and bar.ts_event <= previous:
-                raise CoverageValidationError(
-                    f"{side} source bars are not strictly chronological"
-                )
-            timestamp = _bar_timestamp(bar)
-            if not start <= timestamp < end:
-                raise CoverageValidationError(
-                    f"{side} source bar is outside the requested UTC interval"
-                )
-            previous = bar.ts_event
-        timestamps[side] = tuple(bar.ts_event for bar in bars)
-    if timestamps["BID"] != timestamps["ASK"]:
-        raise CoverageValidationError("G0.5 BID/ASK source coverage is incompatible")
+        counts[side] = value
+    return counts
 
 
 def _derived_structure_valid(
     manifest: dict[str, Any],
     parent_sha256: str,
-    sources: dict[str, tuple[Bar, ...]],
+    source_counts: dict[str, int],
     parent_ingestion_version: str = INGESTION_VERSION,
 ) -> bool:
     expected = {
@@ -465,9 +531,9 @@ def _derived_structure_valid(
         "nautilus_version": NAUTILUS_VERSION,
         "instrument_id": INSTRUMENT_ID,
     }
-    for field, value in expected.items():
-        if manifest.get(field) != value:
-            raise CoverageValidationError(f"G0.6 derived manifest has invalid {field}")
+    for name, value in expected.items():
+        if manifest.get(name) != value:
+            raise CoverageValidationError(f"G0.6 derived manifest has invalid {name}")
     counts_raw = manifest.get("counts")
     if not isinstance(counts_raw, dict):
         raise CoverageValidationError("G0.6 derived manifest has invalid counts")
@@ -475,7 +541,7 @@ def _derived_structure_valid(
     if not isinstance(source_raw, dict):
         raise CoverageValidationError("G0.6 derived manifest has invalid source counts")
     for side in _SIDES:
-        if cast(dict[str, Any], source_raw).get(side) != len(sources[side]):
+        if cast(dict[str, Any], source_raw).get(side) != source_counts[side]:
             raise CoverageValidationError(
                 f"G0.6 {side} source count does not match the catalog"
             )
@@ -503,22 +569,6 @@ def _derived_structure_valid(
         and manifest.get("bid_ask_derived_coverage_matches") is True
         and all_required_series_nonempty
     )
-
-
-def _timestamp_set(
-    values: Sequence[datetime],
-    start: datetime,
-    end: datetime,
-    side: str,
-) -> set[datetime]:
-    normalized = [_validate_utc_minute(value, f"{side} timestamp") for value in values]
-    if len(set(normalized)) != len(normalized):
-        raise CoverageValidationError(f"{side} timestamps contain duplicates")
-    if any(value < start or value >= end for value in normalized):
-        raise CoverageValidationError(
-            f"{side} timestamp is outside the requested UTC interval"
-        )
-    return set(normalized)
 
 
 def _validate_utc_minute(value: datetime, field: str) -> datetime:
@@ -551,6 +601,18 @@ def _bar_timestamp(bar: Bar) -> datetime:
     seconds, nanos = divmod(bar.ts_event, 1_000_000_000)
     if nanos:
         raise CoverageValidationError("source timestamp is not second aligned")
+    return _UNIX_EPOCH + timedelta(seconds=seconds)
+
+
+def _datetime_ns(value: datetime) -> int:
+    delta = value - _UNIX_EPOCH
+    return (delta.days * 86_400 + delta.seconds) * 1_000_000_000
+
+
+def _bar_ns_datetime(value: int) -> datetime:
+    seconds, nanos = divmod(value, 1_000_000_000)
+    if nanos:
+        raise CoverageValidationError("coverage chunk boundary is not second aligned")
     return _UNIX_EPOCH + timedelta(seconds=seconds)
 
 

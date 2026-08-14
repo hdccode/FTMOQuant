@@ -5,8 +5,12 @@ from __future__ import annotations
 import hashlib
 import json
 import re
+from collections.abc import Iterator
 from dataclasses import dataclass
 from typing import Any, cast
+
+from nautilus_trader.model import Bar
+from nautilus_trader.persistence import ParquetDataCatalog
 
 from ftmoquant.data.dukascopy import INSTRUMENT_ID, NAUTILUS_VERSION
 
@@ -15,6 +19,8 @@ HF_INGESTION_VERSION = "g1-hf-dukascopy-1"
 TRUSTED_INGESTION_VERSIONS = frozenset({LEGACY_INGESTION_VERSION, HF_INGESTION_VERSION})
 _SHA256 = re.compile(r"[0-9a-f]{64}")
 _GIT_SHA = re.compile(r"[0-9a-f]{40}")
+_MINUTE_NS = 60_000_000_000
+_SIDES = ("BID", "ASK")
 
 
 class CanonicalSourceValidationError(ValueError):
@@ -27,6 +33,120 @@ class CanonicalSourceIdentity:
 
     ingestion_version: str
     distribution_source: str
+
+
+@dataclass(frozen=True, slots=True)
+class PairedSourceChunk:
+    """One bounded half-open UTC range of validated paired source bars."""
+
+    start_ns: int
+    end_ns: int
+    bid_bars: tuple[Bar, ...]
+    ask_bars: tuple[Bar, ...]
+
+
+def iter_paired_eurusd_source_chunks(
+    catalog: ParquetDataCatalog,
+    manifest: dict[str, Any],
+    start_ns: int,
+    end_ns: int,
+    *,
+    chunk_minutes: int,
+) -> Iterator[PairedSourceChunk]:
+    """Yield strictly validated paired bars without materializing the catalog."""
+
+    if start_ns % _MINUTE_NS or end_ns % _MINUTE_NS or end_ns <= start_ns:
+        raise CanonicalSourceValidationError(
+            "canonical source scan requires a non-empty minute-aligned range"
+        )
+    if chunk_minutes <= 0:
+        raise CanonicalSourceValidationError(
+            "source scan chunk_minutes must be positive"
+        )
+    qa_raw = manifest.get("qa")
+    if not isinstance(qa_raw, dict):
+        raise CanonicalSourceValidationError("canonical source manifest has invalid qa")
+    qa = cast(dict[str, Any], qa_raw)
+    expected_counts: dict[str, int] = {}
+    for side in _SIDES:
+        value = qa.get(f"{side.lower()}_bar_count")
+        if not isinstance(value, int) or isinstance(value, bool) or value <= 0:
+            raise CanonicalSourceValidationError(
+                f"canonical source manifest has invalid {side} bar count"
+            )
+        expected_counts[side] = value
+
+    for side in _SIDES:
+        identifier = _source_bar_type(side)
+        first_init = catalog.query_first_timestamp("bars", identifier)
+        last_init = catalog.query_last_timestamp("bars", identifier)
+        if first_init is None or last_init is None:
+            raise CanonicalSourceValidationError(
+                f"canonical {side} source series is empty"
+            )
+        if first_init < start_ns + _MINUTE_NS or last_init > end_ns:
+            raise CanonicalSourceValidationError(
+                f"canonical {side} source bars fall outside the requested UTC range"
+            )
+
+    previous: dict[str, int | None] = {side: None for side in _SIDES}
+    counts = {side: 0 for side in _SIDES}
+    chunk_ns = chunk_minutes * _MINUTE_NS
+    chunk_start = start_ns
+    while chunk_start < end_ns:
+        chunk_end = min(chunk_start + chunk_ns, end_ns)
+        by_side: dict[str, tuple[Bar, ...]] = {}
+        for side in _SIDES:
+            identifier = _source_bar_type(side)
+            queried = catalog.query_bars([identifier], start=chunk_start, end=chunk_end)
+            bars = tuple(
+                bar for bar in queried if chunk_start <= bar.ts_event < chunk_end
+            )
+            for bar in bars:
+                if str(bar.bar_type) != identifier:
+                    raise CanonicalSourceValidationError(
+                        f"catalog returned an invalid {side} source bar type"
+                    )
+                if bar.ts_event % _MINUTE_NS:
+                    raise CanonicalSourceValidationError(
+                        f"canonical {side} source bar is not UTC-minute aligned"
+                    )
+                if bar.ts_init != bar.ts_event + _MINUTE_NS:
+                    raise CanonicalSourceValidationError(
+                        f"canonical {side} source bar has invalid timestamps"
+                    )
+                if previous[side] is not None and bar.ts_event <= cast(
+                    int, previous[side]
+                ):
+                    raise CanonicalSourceValidationError(
+                        f"canonical {side} source bars are not strictly chronological"
+                    )
+                previous[side] = bar.ts_event
+            counts[side] += len(bars)
+            by_side[side] = bars
+        bid_times = tuple(bar.ts_event for bar in by_side["BID"])
+        ask_times = tuple(bar.ts_event for bar in by_side["ASK"])
+        if bid_times != ask_times:
+            raise CanonicalSourceValidationError(
+                "BID/ASK one-minute source coverage mismatch; not research-ready"
+            )
+        yield PairedSourceChunk(
+            start_ns=chunk_start,
+            end_ns=chunk_end,
+            bid_bars=by_side["BID"],
+            ask_bars=by_side["ASK"],
+        )
+        chunk_start = chunk_end
+
+    for side in _SIDES:
+        if counts[side] != expected_counts[side]:
+            raise CanonicalSourceValidationError(
+                f"{side} catalog count does not match the canonical source manifest"
+            )
+
+
+def _source_bar_type(side: str) -> str:
+    return f"{INSTRUMENT_ID}-1-MINUTE-{side}-EXTERNAL"
 
 
 def validate_canonical_eurusd_source_manifest(

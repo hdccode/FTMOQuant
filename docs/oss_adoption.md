@@ -352,6 +352,77 @@ calendar's holiday list is also unsafe: provider-specific offline intervals
 can differ, and unverified closure assumptions would convert missing source
 data into false research readiness.
 
+## Multi-year G0.6 and session-QA catalog streaming
+
+The full G1 development-plus-validation catalog contains several million
+paired one-minute bars. G0.6 and the session-aware coverage bridge therefore
+must not use an unbounded `tuple(catalog.query_bars(...))` or a dataset-wide
+timestamp set. The installed NautilusTrader `2.0.0rc2` generated stubs,
+runtime signatures, and a local endpoint fixture were inspected before this
+change.
+
+The exact adopted `ParquetDataCatalog` APIs are:
+
+- `query_bars(identifiers=None, start=None, end=None, where_clause=None)` for
+  bounded native DataFusion reads;
+- `query_first_timestamp("bars", identifier)` and
+  `query_last_timestamp("bars", identifier)` for constant-memory outer-range
+  checks;
+- `query_files("bars", [identifier])` for an output preflight without decoding
+  all stored bars; and
+- `write_bars(data, start=None, end=None, skip_disjoint_check=False)` for
+  incremental, disjoint checked derived output.
+
+The rc2 fixture establishes an important detail not apparent from the Python
+signature: bar `start`/`end` filtering uses stored `ts_init` and includes the
+endpoints. Each 10,000-minute native query is consequently normalized with a
+local `ts_event` predicate. Source chunks use `[start, end)`; stored derived
+close timestamps use `(start, end]`. Adjacent chunks therefore neither lose
+nor duplicate boundary bars.
+
+The shared canonical scanner first performs a complete read-only validation
+pass before any derived write. It carries only the previous BID/ASK timestamp
+and counts, while preserving exact type, minute alignment, open/close
+timestamp, chronology, manifest count, range, and paired-coverage checks. It
+continues to admit only `g0.5-1` and `g1-hf-dukascopy-1`; no provenance rule was
+relaxed.
+
+During the second G0.6 pass, each 1H/4H side retains only its current partial
+aligned window (at most 240 source bars), complete eligible windows from the
+current bounded query, rolling content/coverage hashes, counts, and the
+dropped-window details which must appear in the manifest. Complete windows are
+still replayed through the pinned native `BacktestEngine` composite-bar
+aggregator with the unchanged G0.6 configuration. Emitted bars are validated,
+hashed, and written incrementally; they are not accumulated for the full
+dataset. A final bounded catalog rescan proves persisted count and content
+hashes. If a failed run leaves derived files without a manifest, the next run
+fails closed instead of silently adopting them.
+
+Session QA uses the same paired scanner. Its cross-chunk state is only the next
+minute, six counters, and one active missing interval. It merges bounded,
+strictly ordered BID/ASK timestamps minute by minute, preserving
+`expected_market_closed`, `unexplained_missing`, missing-side labels, interval
+coalescing, readiness, and semantic hashes. Only completed interval details,
+which are themselves required manifest output, accumulate. No whole-catalog
+bar list or timestamp set remains.
+
+### Targeted GitHub reuse audit
+
+| Candidate | Finding |
+| --- | --- |
+| [NautilusTrader catalog/DataFusion path](https://github.com/nautechsystems/nautilus_trader/blob/develop/docs/integrations/databento.md#performance-considerations) | Adopted through the exact installed rc2 APIs above. Nautilus performs predicate-aware Parquet decoding into canonical `Bar` objects, retaining its schema and precision contract. |
+| Installed rc2 `DataBackendSession` / `DataQueryResult` | The wheel exposes iterator types, but `ParquetDataCatalog` exposes no `backend_session` bridge in this release. Reaching into an unavailable or private session path was rejected. |
+| [Apache Arrow Dataset scanner](https://github.com/apache/arrow/blob/main/python/pyarrow/dataset.py) | Supports predicate pushdown and record-batch iteration, but direct scanning would require reimplementing Nautilus catalog file discovery, metadata interpretation, and binary bar decoding. It remains the importer tool, not a second catalog reader. |
+| [DuckDB streaming record batches](https://github.com/duckdb/duckdb/issues/5397) | Rejected: it adds a query engine while Nautilus already uses DataFusion, and its streaming reader has connection-lifetime constraints irrelevant to the native catalog contract. |
+
+Differential tests retain the former pure bounded-fixture path as an oracle.
+With 37-minute catalog chunks (inside both 1H and 4H windows), the streaming
+path matches reference OHLCV, target timestamps, dropped windows, native
+callback times, readiness fields, complete derived manifests, coverage
+classifications, and coverage semantic SHA-256 values. Separate cases place a
+missing minute and a weekend across query boundaries and prove deterministic
+incremental writes and repeated runs.
+
 ## G0.7 native execution-harness adoption
 
 G0.7 keeps the validated G0.5 one-minute external BID and ASK bars as the only

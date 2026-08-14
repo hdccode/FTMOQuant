@@ -4,7 +4,7 @@ import argparse
 import hashlib
 import json
 from collections.abc import Sequence
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, field
 from datetime import UTC, date, datetime, timedelta
 from importlib.metadata import version
 from pathlib import Path
@@ -29,6 +29,7 @@ from nautilus_trader.persistence import ParquetDataCatalog
 
 from ftmoquant.data.canonical_source import (
     CanonicalSourceValidationError,
+    iter_paired_eurusd_source_chunks,
     validate_canonical_eurusd_source_manifest,
 )
 from ftmoquant.data.dukascopy import INSTRUMENT_ID, NAUTILUS_VERSION
@@ -43,6 +44,7 @@ _BUILD_DELAY_MICROSECONDS = 1
 _BUILD_DELAY_NS = _BUILD_DELAY_MICROSECONDS * 1_000
 _TARGETS = ((1, 60), (4, 240))
 _SIDES = ("BID", "ASK")
+_SOURCE_QUERY_CHUNK_MINUTES = 10_000
 
 
 class DerivationValidationError(ValueError):
@@ -62,16 +64,36 @@ class DroppedWindow:
 
 @dataclass(frozen=True, slots=True)
 class SeriesResult:
-    """QA and output for one target/price-side series."""
+    """Bounded-memory QA summary for one target/price-side series."""
 
     source_bar_type: str
     composite_bar_type: str
     target_bar_type: str
     source_bar_count: int
     eligible_source_bar_count: int
-    emitted_bars: tuple[Bar, ...]
+    emitted_bar_count: int
+    content_sha256: str
+    coverage_sha256: str
     dropped_windows: tuple[DroppedWindow, ...]
-    callback_timestamps_ns: tuple[int, ...]
+
+
+@dataclass(slots=True)
+class _SeriesAccumulator:
+    """Only cross-query state needed for one aligned derived series."""
+
+    side: str
+    hours: int
+    expected_minutes: int
+    range_end_ns: int
+    window_start_ns: int
+    observed_window: list[Bar] = field(default_factory=list)
+    eligible_pending: list[Bar] = field(default_factory=list)
+    source_bar_count: int = 0
+    eligible_source_bar_count: int = 0
+    emitted_bar_count: int = 0
+    dropped_windows: list[DroppedWindow] = field(default_factory=list)
+    content_digest: Any = field(default_factory=hashlib.sha256)
+    coverage_digest: Any = field(default_factory=hashlib.sha256)
 
 
 @dataclass(frozen=True, slots=True)
@@ -118,45 +140,37 @@ def derive_eurusd_bars(output_root: Path) -> DerivationResult:
         )
     instrument = instruments[0]
 
-    sources = {
-        side: tuple(catalog.query_bars([_source_bar_type(side)])) for side in _SIDES
-    }
-    _validate_sources(sources, parent_manifest)
+    manifest_path = root / DERIVED_MANIFEST_FILENAME
+    write_outputs = _preflight_output_mode(catalog, manifest_path)
+    _validate_streaming_source(
+        catalog, parent_manifest, requested_start_ns, requested_end_ns
+    )
 
-    series: list[SeriesResult] = []
-    for hours, expected_minutes in _TARGETS:
-        for side in _SIDES:
-            eligible, dropped = _eligible_source_bars(
-                sources[side],
-                hours,
-                expected_minutes,
-                range_start_ns=requested_start_ns,
-                range_end_ns=requested_end_ns,
+    accumulators = _series_accumulators(requested_start_ns, requested_end_ns)
+    try:
+        chunks = iter_paired_eurusd_source_chunks(
+            catalog,
+            parent_manifest,
+            requested_start_ns,
+            requested_end_ns,
+            chunk_minutes=_SOURCE_QUERY_CHUNK_MINUTES,
+        )
+        for chunk in chunks:
+            for side, bars in (("BID", chunk.bid_bars), ("ASK", chunk.ask_bars)):
+                for bar in bars:
+                    for hours, _ in _TARGETS:
+                        _consume_series_bar(accumulators[(hours, side)], bar)
+            _flush_eligible_pending(
+                accumulators, instrument, catalog, write_outputs=write_outputs
             )
-            emitted, callbacks = _aggregate_native(
-                instrument=instrument,
-                source_bars=eligible,
-                side=side,
-                hours=hours,
-            )
-            _validate_native_output(
-                emitted=emitted,
-                callback_timestamps_ns=callbacks,
-                source_bars=eligible,
-                hours=hours,
-            )
-            series.append(
-                SeriesResult(
-                    source_bar_type=_source_bar_type(side),
-                    composite_bar_type=_composite_bar_type(hours, side),
-                    target_bar_type=_target_bar_type(hours, side),
-                    source_bar_count=len(sources[side]),
-                    eligible_source_bar_count=len(eligible),
-                    emitted_bars=emitted,
-                    dropped_windows=dropped,
-                    callback_timestamps_ns=callbacks,
-                )
-            )
+    except CanonicalSourceValidationError as error:
+        raise DerivationValidationError(str(error)) from error
+    for accumulator in accumulators.values():
+        _finish_series_windows(accumulator)
+    _flush_eligible_pending(
+        accumulators, instrument, catalog, write_outputs=write_outputs
+    )
+    series = [_series_result(item) for item in accumulators.values()]
 
     _validate_bid_ask_coverage(series)
     coverage_status, research_ready, readiness_reasons = _research_readiness(series)
@@ -170,20 +184,22 @@ def derive_eurusd_bars(output_root: Path) -> DerivationResult:
         research_ready,
         readiness_reasons,
     )
-    manifest_path = root / DERIVED_MANIFEST_FILENAME
     manifest_bytes = (json.dumps(manifest, indent=2, sort_keys=True) + "\n").encode()
-    _preflight_idempotency(catalog, series, manifest_path, manifest_bytes)
-    for item in series:
-        if item.emitted_bars and not catalog.query_bars([item.target_bar_type]):
-            catalog.write_bars(item.emitted_bars)
-    if not manifest_path.exists():
+    _validate_stored_outputs(catalog, series, requested_start_ns, requested_end_ns)
+    if manifest_path.exists():
+        if manifest_path.read_bytes() != manifest_bytes:
+            raise DerivationValidationError(
+                "existing derived manifest conflicts with this derivation: "
+                f"{manifest_path}"
+            )
+    else:
         manifest_path.write_bytes(manifest_bytes)
 
     return DerivationResult(
         manifest_path=manifest_path,
         catalog_path=catalog_path,
         emitted_counts={
-            item.target_bar_type: len(item.emitted_bars) for item in series
+            item.target_bar_type: item.emitted_bar_count for item in series
         },
         research_ready=research_ready,
     )
@@ -240,48 +256,228 @@ def _requested_range_ns(manifest: dict[str, Any]) -> tuple[int, int]:
     return int(start.timestamp() * 1_000_000_000), int(end.timestamp() * 1_000_000_000)
 
 
-def _validate_sources(
-    sources: dict[str, tuple[Bar, ...]], parent_manifest: dict[str, Any]
-) -> None:
-    qa_raw = parent_manifest.get("qa")
-    if not isinstance(qa_raw, dict):
-        raise DerivationValidationError("G0.5 parent manifest has invalid qa")
-    qa = cast(dict[str, Any], qa_raw)
-    expected_counts = {
-        "BID": qa.get("bid_bar_count"),
-        "ASK": qa.get("ask_bar_count"),
-    }
-    for side, bars in sources.items():
-        if expected_counts[side] != len(bars):
-            raise DerivationValidationError(
-                f"{side} catalog count does not match the G0.5 parent manifest"
-            )
-        if any(str(bar.bar_type) != _source_bar_type(side) for bar in bars):
-            raise DerivationValidationError(
-                f"catalog returned an invalid {side} bar type"
-            )
-        previous: int | None = None
-        for bar in bars:
-            if bar.ts_event % _MINUTE_NS != 0:
-                raise DerivationValidationError(
-                    f"{side} source bar is not UTC-minute aligned"
-                )
-            if bar.ts_init != bar.ts_event + _MINUTE_NS:
-                raise DerivationValidationError(
-                    f"{side} source bar does not use G0.5 open/close timestamps"
-                )
-            if previous is not None and bar.ts_event <= previous:
-                raise DerivationValidationError(
-                    f"{side} source bars are not strictly chronological"
-                )
-            previous = bar.ts_event
-    bid_times = tuple(bar.ts_event for bar in sources["BID"])
-    ask_times = tuple(bar.ts_event for bar in sources["ASK"])
-    if bid_times != ask_times:
+def _preflight_output_mode(catalog: ParquetDataCatalog, manifest_path: Path) -> bool:
+    """Return whether output is new, rejecting orphaned derived catalog data."""
+
+    target_files = [
+        path
+        for hours, _ in _TARGETS
+        for side in _SIDES
+        for path in catalog.query_files("bars", [_target_bar_type(hours, side)])
+    ]
+    if target_files and not manifest_path.exists():
         raise DerivationValidationError(
-            "BID/ASK one-minute source coverage mismatch; derived data is not "
-            "research-ready"
+            "catalog already contains conflicting data without a derived manifest"
         )
+    return not manifest_path.exists()
+
+
+def _validate_streaming_source(
+    catalog: ParquetDataCatalog,
+    parent_manifest: dict[str, Any],
+    start_ns: int,
+    end_ns: int,
+) -> None:
+    """Complete a read-only paired validation pass before derived writes."""
+
+    try:
+        for _ in iter_paired_eurusd_source_chunks(
+            catalog,
+            parent_manifest,
+            start_ns,
+            end_ns,
+            chunk_minutes=_SOURCE_QUERY_CHUNK_MINUTES,
+        ):
+            pass
+    except CanonicalSourceValidationError as error:
+        raise DerivationValidationError(str(error)) from error
+
+
+def _series_accumulators(
+    start_ns: int, end_ns: int
+) -> dict[tuple[int, str], _SeriesAccumulator]:
+    accumulators: dict[tuple[int, str], _SeriesAccumulator] = {}
+    for hours, expected_minutes in _TARGETS:
+        interval_ns = hours * 60 * _MINUTE_NS
+        if start_ns % interval_ns or end_ns % interval_ns:
+            raise DerivationValidationError(
+                f"requested range is not aligned for {hours}H derivation"
+            )
+        for side in _SIDES:
+            accumulators[(hours, side)] = _SeriesAccumulator(
+                side=side,
+                hours=hours,
+                expected_minutes=expected_minutes,
+                range_end_ns=end_ns,
+                window_start_ns=start_ns,
+            )
+    return accumulators
+
+
+def _consume_series_bar(accumulator: _SeriesAccumulator, bar: Bar) -> None:
+    interval_ns = accumulator.hours * 60 * _MINUTE_NS
+    while bar.ts_event >= accumulator.window_start_ns + interval_ns:
+        _finalize_series_window(accumulator)
+    if bar.ts_event < accumulator.window_start_ns:
+        raise DerivationValidationError("source bar precedes active derived window")
+    accumulator.observed_window.append(bar)
+    accumulator.source_bar_count += 1
+
+
+def _finish_series_windows(accumulator: _SeriesAccumulator) -> None:
+    while accumulator.window_start_ns < accumulator.range_end_ns:
+        _finalize_series_window(accumulator)
+
+
+def _finalize_series_window(accumulator: _SeriesAccumulator) -> None:
+    interval_ns = accumulator.hours * 60 * _MINUTE_NS
+    observed = accumulator.observed_window
+    complete = len(observed) == accumulator.expected_minutes and all(
+        bar.ts_event == accumulator.window_start_ns + index * _MINUTE_NS
+        for index, bar in enumerate(observed)
+    )
+    if complete:
+        accumulator.eligible_pending.extend(observed)
+        accumulator.eligible_source_bar_count += len(observed)
+    else:
+        accumulator.dropped_windows.append(
+            DroppedWindow(
+                start_utc=_iso_ns(accumulator.window_start_ns),
+                end_utc=_iso_ns(accumulator.window_start_ns + interval_ns),
+                expected_minutes=accumulator.expected_minutes,
+                observed_minutes=len(observed),
+                reason=(
+                    "no_source_updates"
+                    if not observed
+                    else "incomplete_or_nonconsecutive_minutes"
+                ),
+            )
+        )
+    observed.clear()
+    accumulator.window_start_ns += interval_ns
+
+
+def _flush_eligible_pending(
+    accumulators: dict[tuple[int, str], _SeriesAccumulator],
+    instrument: CurrencyPair,
+    catalog: ParquetDataCatalog,
+    *,
+    write_outputs: bool,
+) -> None:
+    for hours, _ in _TARGETS:
+        bid_state = accumulators[(hours, "BID")]
+        ask_state = accumulators[(hours, "ASK")]
+        bid_source = tuple(bid_state.eligible_pending)
+        ask_source = tuple(ask_state.eligible_pending)
+        bid_state.eligible_pending.clear()
+        ask_state.eligible_pending.clear()
+        if tuple(bar.ts_event for bar in bid_source) != tuple(
+            bar.ts_event for bar in ask_source
+        ):
+            raise DerivationValidationError(
+                f"{hours}H BID/ASK eligible source coverage mismatch"
+            )
+        if not bid_source:
+            continue
+        emitted_by_side: dict[str, tuple[Bar, ...]] = {}
+        for side, source_bars, state in (
+            ("BID", bid_source, bid_state),
+            ("ASK", ask_source, ask_state),
+        ):
+            emitted, callbacks = _aggregate_native(
+                instrument=instrument,
+                source_bars=source_bars,
+                side=side,
+                hours=hours,
+            )
+            _validate_native_output(
+                emitted=emitted,
+                callback_timestamps_ns=callbacks,
+                source_bars=source_bars,
+                hours=hours,
+            )
+            for bar in emitted:
+                _update_bar_digest(state.content_digest, bar)
+                state.coverage_digest.update(f"{bar.ts_event}\n".encode())
+            state.emitted_bar_count += len(emitted)
+            emitted_by_side[side] = emitted
+        if tuple(bar.ts_event for bar in emitted_by_side["BID"]) != tuple(
+            bar.ts_event for bar in emitted_by_side["ASK"]
+        ):
+            raise DerivationValidationError(
+                f"{hours}H BID/ASK derived coverage mismatch; not research-ready"
+            )
+        if write_outputs:
+            catalog.write_bars(emitted_by_side["BID"])
+            catalog.write_bars(emitted_by_side["ASK"])
+
+
+def _series_result(accumulator: _SeriesAccumulator) -> SeriesResult:
+    return SeriesResult(
+        source_bar_type=_source_bar_type(accumulator.side),
+        composite_bar_type=_composite_bar_type(accumulator.hours, accumulator.side),
+        target_bar_type=_target_bar_type(accumulator.hours, accumulator.side),
+        source_bar_count=accumulator.source_bar_count,
+        eligible_source_bar_count=accumulator.eligible_source_bar_count,
+        emitted_bar_count=accumulator.emitted_bar_count,
+        content_sha256=accumulator.content_digest.hexdigest(),
+        coverage_sha256=accumulator.coverage_digest.hexdigest(),
+        dropped_windows=tuple(accumulator.dropped_windows),
+    )
+
+
+def _validate_stored_outputs(
+    catalog: ParquetDataCatalog,
+    series: Sequence[SeriesResult],
+    start_ns: int,
+    end_ns: int,
+) -> None:
+    """Boundedly prove incremental writes or a repeated run against summaries."""
+
+    chunk_ns = _SOURCE_QUERY_CHUNK_MINUTES * _MINUTE_NS
+    for item in series:
+        files = catalog.query_files("bars", [item.target_bar_type])
+        if not files:
+            if item.emitted_bar_count:
+                raise DerivationValidationError(
+                    f"catalog is missing derived data for {item.target_bar_type}"
+                )
+            continue
+        first = catalog.query_first_timestamp("bars", item.target_bar_type)
+        last = catalog.query_last_timestamp("bars", item.target_bar_type)
+        if first is None or last is None or first <= start_ns or last > end_ns:
+            raise DerivationValidationError(
+                f"catalog has out-of-range derived data for {item.target_bar_type}"
+            )
+        digest = hashlib.sha256()
+        count = 0
+        previous: int | None = None
+        chunk_start = start_ns
+        while chunk_start < end_ns:
+            chunk_end = min(chunk_start + chunk_ns, end_ns)
+            queried = catalog.query_bars(
+                [item.target_bar_type], start=chunk_start, end=chunk_end
+            )
+            bars = tuple(
+                bar for bar in queried if chunk_start < bar.ts_event <= chunk_end
+            )
+            for bar in bars:
+                if str(bar.bar_type) != item.target_bar_type:
+                    raise DerivationValidationError(
+                        "catalog returned an invalid derived bar type"
+                    )
+                if previous is not None and bar.ts_event <= previous:
+                    raise DerivationValidationError(
+                        "stored derived bars are not strictly chronological"
+                    )
+                previous = bar.ts_event
+                _update_bar_digest(digest, bar)
+            count += len(bars)
+            chunk_start = chunk_end
+        if count != item.emitted_bar_count or digest.hexdigest() != item.content_sha256:
+            raise DerivationValidationError(
+                f"catalog contains conflicting data for {item.target_bar_type}"
+            )
 
 
 def _eligible_source_bars(
@@ -452,8 +648,9 @@ def _validate_native_output(
 def _validate_bid_ask_coverage(series: Sequence[SeriesResult]) -> None:
     for hours, _ in _TARGETS:
         by_side = {
-            item.target_bar_type.split("-")[-2]: tuple(
-                bar.ts_event for bar in item.emitted_bars
+            item.target_bar_type.split("-")[-2]: (
+                item.emitted_bar_count,
+                item.coverage_sha256,
             )
             for item in series
             if item.target_bar_type.startswith(f"{INSTRUMENT_ID}-{hours}-HOUR")
@@ -477,7 +674,7 @@ def _research_readiness(
         for item in series
         for window in item.dropped_windows
     )
-    all_series_nonempty = all(item.emitted_bars for item in series)
+    all_series_nonempty = all(item.emitted_bar_count > 0 for item in series)
 
     if has_incomplete:
         coverage_status = "incomplete"
@@ -499,28 +696,6 @@ def _research_readiness(
 
     research_ready = coverage_status == "complete" and all_series_nonempty
     return coverage_status, research_ready, reasons
-
-
-def _preflight_idempotency(
-    catalog: ParquetDataCatalog,
-    series: Sequence[SeriesResult],
-    manifest_path: Path,
-    manifest_bytes: bytes,
-) -> None:
-    for item in series:
-        existing = catalog.query_bars([item.target_bar_type])
-        if existing and existing != list(item.emitted_bars):
-            raise DerivationValidationError(
-                f"catalog already contains conflicting data for {item.target_bar_type}"
-            )
-        if existing and not item.emitted_bars:
-            raise DerivationValidationError(
-                f"catalog contains unexpected data for {item.target_bar_type}"
-            )
-    if manifest_path.exists() and manifest_path.read_bytes() != manifest_bytes:
-        raise DerivationValidationError(
-            f"existing derived manifest conflicts with this derivation: {manifest_path}"
-        )
 
 
 def _derived_manifest(
@@ -548,8 +723,8 @@ def _derived_manifest(
             "composite_bar_type": item.composite_bar_type,
             "source_bar_count": item.source_bar_count,
             "eligible_source_bar_count": item.eligible_source_bar_count,
-            "emitted_bar_count": len(item.emitted_bars),
-            "content_sha256": _bars_sha256(item.emitted_bars),
+            "emitted_bar_count": item.emitted_bar_count,
+            "content_sha256": item.content_sha256,
             "dropped_window_count": len(item.dropped_windows),
             "dropped_incomplete_window_count": incomplete,
             "no_update_window_count": no_updates,
@@ -559,7 +734,7 @@ def _derived_manifest(
         }
         timeframe = "4H" if "-4-HOUR-" in item.target_bar_type else "1H"
         side = "ASK" if "-ASK-" in item.target_bar_type else "BID"
-        emitted_counts[timeframe][side] = len(item.emitted_bars)
+        emitted_counts[timeframe][side] = item.emitted_bar_count
     return {
         "derivation_version": DERIVATION_VERSION,
         "config_version": CONFIG_VERSION,
@@ -628,20 +803,24 @@ def _derived_manifest(
 def _bars_sha256(bars: Sequence[Bar]) -> str:
     digest = hashlib.sha256()
     for bar in bars:
-        record = {
-            "bar_type": str(bar.bar_type),
-            "open": str(bar.open),
-            "high": str(bar.high),
-            "low": str(bar.low),
-            "close": str(bar.close),
-            "volume": str(bar.volume),
-            "ts_event": bar.ts_event,
-            "ts_init": bar.ts_init,
-        }
-        digest.update(
-            (json.dumps(record, sort_keys=True, separators=(",", ":")) + "\n").encode()
-        )
+        _update_bar_digest(digest, bar)
     return digest.hexdigest()
+
+
+def _update_bar_digest(digest: Any, bar: Bar) -> None:
+    record = {
+        "bar_type": str(bar.bar_type),
+        "open": str(bar.open),
+        "high": str(bar.high),
+        "low": str(bar.low),
+        "close": str(bar.close),
+        "volume": str(bar.volume),
+        "ts_event": bar.ts_event,
+        "ts_init": bar.ts_init,
+    }
+    digest.update(
+        (json.dumps(record, sort_keys=True, separators=(",", ":")) + "\n").encode()
+    )
 
 
 def _source_bar_type(side: str) -> str:

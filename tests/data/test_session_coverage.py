@@ -53,9 +53,7 @@ def test_spring_dst_weekend_is_forty_seven_hours() -> None:
 
     assert result.expected_closure_minute_count == 47 * 60
     assert result.unexplained_missing_minute_count == 0
-    assert result.expected_closure_intervals[0].start_utc == (
-        "2024-03-08T22:00:00Z"
-    )
+    assert result.expected_closure_intervals[0].start_utc == ("2024-03-08T22:00:00Z")
     assert result.expected_closure_intervals[0].end_utc == "2024-03-10T20:59:00Z"
 
 
@@ -149,9 +147,7 @@ def test_weekend_closure_does_not_block_otherwise_valid_readiness() -> None:
     start = _dt("2024-07-05T20:59:00Z")
     end = _dt("2024-07-07T21:01:00Z")
     observed = (start, end - timedelta(minutes=1))
-    assessment = coverage.assess_eurusd_source_coverage(
-        start, end, observed, observed
-    )
+    assessment = coverage.assess_eurusd_source_coverage(start, end, observed, observed)
 
     manifest = coverage._coverage_manifest(
         assessment=assessment,
@@ -175,30 +171,58 @@ def test_interval_before_authoritative_policy_fails_closed() -> None:
         )
 
 
-def test_manifest_and_semantic_hash_are_deterministic(tmp_path: Path) -> None:
+def test_manifest_and_semantic_hash_are_deterministic(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     root = _complete_weekday_root(tmp_path)
+    catalog = ParquetDataCatalog(str(root / "catalog"))
+    reference = coverage.assess_eurusd_source_coverage(
+        _dt("2024-01-09T00:00:00Z"),
+        _dt("2024-01-10T00:00:00Z"),
+        tuple(
+            coverage._bar_timestamp(bar)
+            for bar in catalog.query_bars([coverage._source_bar_type("BID")])
+        ),
+        tuple(
+            coverage._bar_timestamp(bar)
+            for bar in catalog.query_bars([coverage._source_bar_type("ASK")])
+        ),
+    )
+    parent_path = root / coverage.PARENT_MANIFEST_FILENAME
+    derived_path = root / coverage.DERIVED_MANIFEST_FILENAME
+    expected_payload = coverage._coverage_manifest(
+        assessment=reference,
+        parent_sha256=hashlib.sha256(parent_path.read_bytes()).hexdigest(),
+        derived_sha256=hashlib.sha256(derived_path.read_bytes()).hexdigest(),
+        structural_valid=True,
+    )
+    expected_manifest = {
+        **expected_payload,
+        "semantic_sha256": coverage._semantic_sha256(expected_payload),
+    }
+    monkeypatch.setattr(coverage, "_SOURCE_QUERY_CHUNK_MINUTES", 37)
 
     first = coverage.run_eurusd_session_coverage_qa(root)
     original = first.manifest_path.read_bytes()
     repeated = coverage.run_eurusd_session_coverage_qa(root)
     manifest = json.loads(original)
     payload = {
-        key: value
-        for key, value in manifest.items()
-        if key != "semantic_sha256"
+        key: value for key, value in manifest.items() if key != "semantic_sha256"
     }
 
     assert repeated.manifest_path.read_bytes() == original
     assert first.semantic_sha256 == repeated.semantic_sha256
-    assert first.semantic_sha256 == hashlib.sha256(
-        json.dumps(payload, sort_keys=True, separators=(",", ":")).encode()
-    ).hexdigest()
+    assert (
+        first.semantic_sha256
+        == hashlib.sha256(
+            json.dumps(payload, sort_keys=True, separators=(",", ":")).encode()
+        ).hexdigest()
+    )
     assert first.session_aware_research_ready is True
+    assert manifest == expected_manifest
     assert manifest["provider"] == "Dukascopy"
     assert manifest["instrument"] == "EUR/USD"
-    assert manifest["session_policy"]["version"] == (
-        "dukascopy-eurusd-ny-close-v1"
-    )
+    assert manifest["session_policy"]["version"] == ("dukascopy-eurusd-ny-close-v1")
     assert manifest["counts"] == {
         "expected_closure_minute_count": 0,
         "expected_open_minute_count": 1440,
@@ -208,6 +232,32 @@ def test_manifest_and_semantic_hash_are_deterministic(tmp_path: Path) -> None:
         "unexplained_missing_minute_count": 0,
     }
     assert "timestamp" not in manifest
+
+
+def test_weekend_classification_is_identical_across_chunk_boundaries() -> None:
+    start = _dt("2024-07-05T20:59:00Z")
+    end = _dt("2024-07-07T21:01:00Z")
+    observed = (start, end - timedelta(minutes=1))
+    reference = coverage.assess_eurusd_source_coverage(start, end, observed, observed)
+    accumulator = coverage._CoverageAccumulator(start=start, end=end, next_minute=start)
+    chunk_start = start
+    while chunk_start < end:
+        chunk_end = min(chunk_start + timedelta(minutes=37), end)
+        chunk_observed = tuple(
+            timestamp for timestamp in observed if chunk_start <= timestamp < chunk_end
+        )
+        coverage._process_coverage_chunk(
+            accumulator,
+            chunk_start,
+            chunk_end,
+            chunk_observed,
+            chunk_observed,
+        )
+        chunk_start = chunk_end
+
+    streamed = coverage._finish_coverage(accumulator)
+
+    assert streamed == reference
 
 
 def test_structural_failure_prevents_session_aware_readiness() -> None:
@@ -225,6 +275,38 @@ def test_structural_failure_prevents_session_aware_readiness() -> None:
     )
 
     assert manifest["session_aware_research_ready"] is False
+
+
+def test_streaming_catalog_bid_ask_mismatch_fails_closed(tmp_path: Path) -> None:
+    start = _dt("2024-01-09T00:00:00Z")
+    bids = _minutes(start, 60)
+    asks = bids[:-1]
+    catalog_path = tmp_path / "catalog"
+    catalog_path.mkdir(parents=True)
+    catalog = ParquetDataCatalog(str(catalog_path))
+    catalog.write_instruments([_eurusd_instrument()])
+    catalog.write_bars(_bars(bids, "BID"))
+    catalog.write_bars(_bars(asks, "ASK"))
+    parent = {
+        "provider": "Dukascopy",
+        "symbol": "EURUSD",
+        "instrument_id": coverage.INSTRUMENT_ID,
+        "requested_utc_range": {
+            "start_date": "2024-01-09",
+            "end_date_inclusive": "2024-01-09",
+        },
+        "source_granularity": "1-minute",
+        "price_sides": ["BID", "ASK"],
+        "ingestion_version": "g0.5-1",
+        "nautilus_version": "2.0.0rc2",
+        "qa": {"bid_bar_count": len(bids), "ask_bar_count": len(asks)},
+    }
+    (tmp_path / coverage.PARENT_MANIFEST_FILENAME).write_text(
+        json.dumps(parent, indent=2, sort_keys=True) + "\n", encoding="utf-8"
+    )
+
+    with pytest.raises(coverage.CoverageValidationError, match="coverage mismatch"):
+        coverage.run_eurusd_session_coverage_qa(tmp_path)
 
 
 def _complete_weekday_root(root: Path) -> Path:
