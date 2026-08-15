@@ -1,0 +1,93 @@
+schema_version: 1
+candidate_id: carver_trend_carry_ftmo5_v1
+version: 1.0.0
+status: preregistered_not_evaluated
+
+provenance:
+  pysystemtrade_commit: b4a25e6e1e33a54a3ecfb45c0f6db5e2b60b84f8
+  reference_directory: /Users/Shared/FTMOQuant-data/carver_ftmo5_v1/reference
+  source_sha256:
+    adjusted_prices_csv/SP500.csv: 03b350fa2ca647d658977e3d772d02535a5396ee8652a1c80722516705cb7c7e
+    adjusted_prices_csv/CRUDE_W.csv: 10dcfbdd9ee3f9757cd1eaa4e45f62f33f0e405b7130327ca5cfd8633c87646c
+    multiple_prices_csv/SP500.csv: 3373bd1e83a6d1297e7e56f543fe2df1397d9bfb67b276a7befbaa5c8b5aa670
+    adjusted_prices_csv/EUR.csv: 52f2757baa6d785e518bd49ab8ef5a106e109a83b2b895f39411c362e314947c
+    multiple_prices_csv/GOLD.csv: 5e02e932c5c17aa7e5807e942866a6a0f6f867c1bdca6698acf3609d05af6bdd
+    multiple_prices_csv/CRUDE_W.csv: 64a8c9f46998830eb242695d9d519f2547d20820d222b2c127ebd71f213958d1
+    multiple_prices_csv/SOYBEAN.csv: 911a09de70eca193a756bf88a12eca98eb195a248f3007ade5573c029f0b1bf4
+    adjusted_prices_csv/SOYBEAN.csv: a49d86c4525892c5872470299bdae9ea223483a3eaa58564773f956baaaed016
+    multiple_prices_csv/EUR.csv: eca74f7e539041b99311c8e407a451ccda28930a59c6ae8576866114becdf520
+    adjusted_prices_csv/GOLD.csv: fc85606ff457b752fbce4d73d606bc19dbdd405c5fd8b6b3327e7f3d2f8bc9ae
+
+universe:
+  futures_to_execution:
+    EUR: EUR/USD.DUKASCOPY
+    GOLD: XAU/USD.DUKASCOPY
+    SP500: USA500.DUKASCOPY
+    CRUDE_W: LIGHT.CMD/USD.DUKASCOPY
+    SOYBEAN: SOYBEAN.CMD/USD.DUKASCOPY
+  futures_role: signal_data_only
+  execution_role: Dukascopy_CFD_execution_and_PnL_only
+  basis_mismatch: explicit_report_required_no_favorable_basis_assumption
+
+trend:
+  adjusted_futures_price_only: true
+  ewmac: causal_pysystemtrade_pinned_daily_volatility
+  rules:
+    - {fast: 16, slow: 64, forecast_scalar: 3.75, weight: 0.21}
+    - {fast: 32, slow: 128, forecast_scalar: 2.65, weight: 0.08}
+    - {fast: 64, slow: 256, forecast_scalar: 1.87, weight: 0.21}
+  forecast_cap_absolute: 20
+
+carry:
+  multiple_futures_prices_only: true
+  raw_formula: pinned_pysystemtrade_annualised_futures_roll_divided_by_annualised_futures_return_volatility
+  smoothing_ewm_span_days: 90
+  forecast_scalar: 30
+  weight: 0.50
+  forecast_cap_absolute: 20
+
+combination:
+  forecast_diversification_multiplier: 1.31
+  parameter_optimization: forbidden
+
+causality:
+  reference_observation_available_after_own_timestamp: true
+  same_timestamp_cfd_execution: forbidden_when_signal_uses_reference_observation
+  execution: first_eligible_CFD_market_observation_strictly_later_than_completed_signal_observation
+  forward_fill_from_future_information: forbidden
+  ambiguous_ordering: fail_closed
+
+portfolio:
+  allocation: equal_ex_ante_risk_across_five_mapped_instruments
+  position_scaling: decision_timestamp_information_only
+  chapter_15_six_instrument_weights: forbidden
+  post_hoc_instrument_weighting: forbidden
+  discretionary_filters: forbidden
+  stop_loss: none
+  take_profit: none
+  trailing_stop: none
+  targeting: continuous_systematic_position_targeting
+
+execution_and_costs:
+  framework: existing_FTMOQuant_portfolio_exposure_constraints_and_G0_7_execution_costs_where_possible
+  cost_scenarios: [base, 1.5x]
+
+research_boundary:
+  development_start_utc: "2019-03-11T00:00:00Z"
+  development_end_exclusive_utc: "2023-04-11T00:00:00Z"
+  development_folds_version: g1.4b-development-folds-1
+  development_folds_sha256: 805687e8657c1482d5f8cff4b513385eebfc6a62795735fd4b390019b2e1fdfe
+  validation: locked
+  final_holdout: locked
+  returns_accessed: false
+
+development_gate:
+  pooled_net_daily_mean_gt: 0
+  positive_fold_means_at_least: 2
+  fold_count: 3
+  median_fold_mean_gt: 0
+  pooled_mean_under_1_5x_cost_gt: 0
+  implementation_or_data_integrity_failure: fail
+  report: [sharpe, drawdown, turnover, bootstrap_ci, per_instrument_contribution, basis_mismatch]
+  statistical_significance_required: false
+  failure_rule: reject_retire_without_tuning
