@@ -1,0 +1,77 @@
+schema_version: 1
+strategy_id: leo_gbpusd_v1
+version: 1.0.0
+status: specified_not_run
+
+provenance:
+  source_type: externally_sourced_hypothesis
+  subject: Leo FTMO trader public methodology
+  interpretation: mechanical_approximation_only
+  note_path: docs/research/leo_gbpusd_v1.md
+
+instrument:
+  instrument_id: GBP/USD.DUKASCOPY
+  asset_class: FX
+
+data_semantics:
+  bar_timeframe: 15m
+  bar_completion: completed_bar_only
+  price_input: canonical_bid_ask_ohlc
+  session_timezone: Europe/London
+  dst_policy: IANA_Europe_London_zoneinfo
+  incomplete_or_invalid_bar: no_signal
+
+sessions:
+  asia_reference:
+    window: "00:00 <= London bar end < 08:00"
+    reference: completed_session_high_low
+  london_reference:
+    window: "08:00 <= London bar end < 13:00"
+    reference: completed_session_high_low
+  london_entry:
+    window: "09:00 <= London completed signal bar end < 11:00"
+    reference: asia_reference
+  new_york_entry:
+    window: "14:00 <= London completed signal bar end < 16:00"
+    reference: london_reference
+
+signal:
+  upper_rejection: completed_bar_high_strictly_gt_reference_high_and_close_strictly_lt_reference_high
+  lower_rejection: completed_bar_low_strictly_lt_reference_low_and_close_strictly_gt_reference_low
+  upper_rejection_direction: short
+  lower_rejection_direction: long
+  excluded_conditions:
+    - wick_threshold
+    - trend_filter
+    - volatility_filter
+    - fibonacci
+    - double_top_requirement
+    - discretionary_confirmation
+    - alternate_session_windows
+
+execution:
+  entry_timing: first_synchronized_tradable_g0_7_frame_strictly_after_completed_signal_bar
+  entry_order_type: market
+  engine: existing_nautilus_g0_7_boundary
+  costs: existing_g0_7_cost_profile
+  same_bar_stop_target_policy: lower_timeframe_path_else_stop_first
+
+exits:
+  stop: sweep_bar_extreme
+  profit_target: exactly_3_times_initial_stop_distance_from_executed_entry
+  unresolved_position: close_at_named_entry_window_end
+
+positions:
+  max_open_positions: 1
+  entries_while_position_open: discard
+  maximum_entries_per_named_session_per_london_day: 1
+  overlapping_setup_policy: no_new_entry_while_position_open
+
+research_boundary:
+  validation: locked
+  final_holdout: locked
+  strategy_returns_accessed: false
+
+parameter_family:
+  mode: baseline_only
+  permitted_variants: []

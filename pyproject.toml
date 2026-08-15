@@ -33,6 +33,12 @@ ftmoquant-correct-instrument = "ftmoquant.data.g1_4_cli:correct_main"
 ftmoquant-materialize-instrument-splits = "ftmoquant.data.g1_4_cli:split_main"
 ftmoquant-freeze-instrument-readiness = "ftmoquant.data.g1_4_cli:freeze_instrument_main"
 ftmoquant-freeze-universe-readiness = "ftmoquant.data.g1_4_cli:freeze_universe_main"
+ftmoquant-import-macro-events = "ftmoquant.data.macro_events:main"
+ftmoquant-evaluate-ts-momentum-development = "ftmoquant.research.ts_momentum_development:main"
+ftmoquant-evaluate-session-range-expansion-development = "ftmoquant.research.session_range_expansion_development:main"
+ftmoquant-evaluate-liquidity-shock-reversion-development = "ftmoquant.research.liquidity_shock_reversion_development:main"
+ftmoquant-evaluate-leo-gbpusd-development = "ftmoquant.research.leo_gbpusd_development:main"
+ftmoquant-prepare-leo-gbpusd-development-cache = "ftmoquant.research.leo_gbpusd_development:prepare_cache_main"
 
 [dependency-groups]
 dev = [

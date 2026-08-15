@@ -23,12 +23,7 @@ from nautilus_trader.persistence import ParquetDataCatalog
 
 from ftmoquant.backtest.execution_harness import (
     AccountParameters,
-    CalibrationStatus,
     ExecutionProfile,
-    FeeModelConfig,
-    FeeModelKind,
-    RolloverConfig,
-    RolloverMode,
     _add_venue,
     _engine_config,
     _fee_model,
@@ -36,6 +31,7 @@ from ftmoquant.backtest.execution_harness import (
     _profile_dict,
     _sha256_json,
     _validate_profile,
+    canonical_execution_profile,
 )
 from ftmoquant.data.dukascopy import NAUTILUS_VERSION
 from ftmoquant.research.statistics import (
@@ -61,29 +57,6 @@ DEVELOPMENT_START_NS = 1_552_262_400_000_000_000
 VALIDATION_START_NS = 1_681_171_200_000_000_000
 HOLDOUT_START_NS = 1_724_198_400_000_000_000
 DAY_NS = 86_400_000_000_000
-
-
-def canonical_execution_profile() -> ExecutionProfile:
-    """Return the sole explicit uncalibrated G0.7 baseline assumptions."""
-
-    return ExecutionProfile(
-        fill_on_limit_probability=Decimal(1),
-        adverse_slippage_probability=Decimal(0),
-        random_seed=7,
-        base_latency_ns=0,
-        insert_latency_ns=0,
-        update_latency_ns=0,
-        cancel_latency_ns=0,
-        fee=FeeModelConfig(
-            kind=FeeModelKind.FIXED,
-            commission=Decimal(0),
-            currency="USD",
-            charge_commission_once=True,
-        ),
-        rollover=RolloverConfig(mode=RolloverMode.DISABLED),
-        adaptive_high_low_ordering=False,
-        calibration_status=CalibrationStatus.UNCALIBRATED,
-    )
 
 
 def run_experiment(dataset_root: Path, output_path: Path) -> dict[str, Any]:

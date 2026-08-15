@@ -6,6 +6,7 @@ from pathlib import Path
 from ftmoquant.research.tournament_dashboard import build_dashboard_snapshot
 from ftmoquant.research.tournament_registry import (
     CandidateEligibility,
+    CandidateImplementationStatus,
     EligibilityEnvironment,
     candidate_registry,
     preregistered_selection_contract,
@@ -26,12 +27,50 @@ def test_current_candidate_eligibility_blocks_pit_and_cross_sectional_work() -> 
     carry_value = entries["carry_momentum_value_v1"]
     assert "pit_carry_inputs" in carry_value.unmet_prerequisites
     assert "pit_value_inputs" in carry_value.unmet_prerequisites
-    assert "minimum_cross_sectional_instruments=4" in (
-        carry_value.unmet_prerequisites
+    assert "minimum_cross_sectional_instruments=4" in (carry_value.unmet_prerequisites)
+    assert entries["session_range_expansion_v1"].results_accessed is True
+    assert entries["liquidity_shock_reversion_v1"].implementation_status is (
+        CandidateImplementationStatus.DEVELOPMENT_FAILED_RETIRED
     )
-    assert all(item.results_accessed is False for item in registry.ordered_entries)
+    assert entries["liquidity_shock_reversion_v1"].results_accessed is True
     assert all(
-        item.strategy_logic_present is False for item in registry.ordered_entries
+        item.results_accessed is False
+        for item in registry.ordered_entries
+        if item.candidate_id
+        not in {"session_range_expansion_v1", "liquidity_shock_reversion_v1"}
+    )
+    assert entries["ts_momentum_v1"].implementation_status is (
+        CandidateImplementationStatus.IMPLEMENTED_NOT_EVALUATED
+    )
+    assert entries["leo_gbpusd_v1"].implementation_status is (
+        CandidateImplementationStatus.IMPLEMENTED_NOT_EVALUATED
+    )
+    assert entries["leo_gbpusd_v1"].results_accessed is False
+    assert entries["ts_momentum_v1"].strategy_logic_present is True
+    assert entries["ts_momentum_v1"].strategy_config_sha256 == (
+        "edcbe2e4afe631e5fde1223558122ecf4d796abd0610729313ebbb32a468ccd5"
+    )
+    assert entries["liquidity_shock_reversion_v1"].strategy_logic_present is True
+    assert entries["liquidity_shock_reversion_v1"].strategy_config_sha256 == (
+        "55a2a1814a507ebf53f5713d9672cf5d4fda19790d9c808efc0a9773bed27acd"
+    )
+    assert entries["session_range_expansion_v1"].implementation_status is (
+        CandidateImplementationStatus.DEVELOPMENT_FAILED_RETIRED
+    )
+    assert entries["session_range_expansion_v1"].strategy_logic_present is True
+    assert entries["session_range_expansion_v1"].strategy_config_sha256 == (
+        "5303094db45b3d9164d1854787c39d9ce0e69974875689dc51742e4495b9e472"
+    )
+    assert all(
+        item.strategy_logic_present is False
+        for item in registry.ordered_entries
+        if item.candidate_id
+        not in {
+            "ts_momentum_v1",
+            "session_range_expansion_v1",
+            "liquidity_shock_reversion_v1",
+            "leo_gbpusd_v1",
+        }
     )
 
 

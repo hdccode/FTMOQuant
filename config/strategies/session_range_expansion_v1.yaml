@@ -1,0 +1,59 @@
+schema_version: 1
+strategy_id: session_range_expansion_v1
+version: 1.0.0
+status: implemented_not_evaluated
+
+universe:
+  universe_id: g1_4_fx_usd_liquid_v1
+  universe_plan_sha256: 16c29df7bae3bde0a9e64e2cc7758f158186182a3d7a464347791400abcfff69
+  universe_readiness_sha256: e6d511bb7bbea6b80c42b00c3f1b4c79ea35cd4532d5f71b69ee8f43bea3f8a0
+  ordered_instruments:
+    - EUR/USD.DUKASCOPY
+    - GBP/USD.DUKASCOPY
+
+data_semantics:
+  source: stage_g_synchronized_observed_1m_bid_ask_closes
+  midpoint: (bid_close_plus_ask_close)_divided_by_2
+  session_timezone: Europe/London
+  range_window: "00:00 <= London time < 08:00"
+  breakout_window: "08:00 <= London time < 12:00"
+  exit_time: "16:00 London time"
+  range_rule: max_min_of_completed_1m_midpoints
+  range_completeness: exactly_480_consecutive_completed_1m_midpoints
+  incomplete_or_invalid_range: no_trade
+  instruments_are_independent: true
+
+signal:
+  first_close_above_range_high_target: 1
+  first_close_below_range_low_target: -1
+  no_breakout_target: 0
+  maximum_entries_per_instrument_per_london_day: 1
+  exit_target: 0
+  entry_hold_rule: hold_until_scheduled_exit
+
+execution:
+  output: raw_directional_target_only
+  admitted_targets:
+    - -1
+    - 0
+    - 1
+  eligible_point: synchronized_tradable_stage_g_execution_frame
+  timing_rule: first_eligible_information_time_strictly_after_signal_information_time
+  engine: existing_nautilus_g0_7_boundary
+  parallel_backtester: false
+  strategy_sizing: false
+  ftmo_optimization: false
+
+research_boundary:
+  development_start_utc: "2019-03-11T00:00:00Z"
+  development_end_exclusive_utc: "2023-04-11T00:00:00Z"
+  development_folds_version: g1.4b-development-folds-1
+  development_folds_sha256: 805687e8657c1482d5f8cff4b513385eebfc6a62795735fd4b390019b2e1fdfe
+  fold_reset_rule: fresh_state_and_flat_position_at_each_fold_boundary
+  validation: locked
+  final_holdout: locked
+  strategy_returns_accessed: false
+
+parameter_family:
+  mode: baseline_only
+  permitted_variants: []

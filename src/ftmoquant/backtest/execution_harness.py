@@ -192,6 +192,29 @@ class ExecutionProfile:
     version: str = EXECUTION_PROFILE_VERSION
 
 
+def canonical_execution_profile() -> ExecutionProfile:
+    """Return the repository's sole uncalibrated G0.7 execution baseline."""
+
+    return ExecutionProfile(
+        fill_on_limit_probability=Decimal(1),
+        adverse_slippage_probability=Decimal(0),
+        random_seed=7,
+        base_latency_ns=0,
+        insert_latency_ns=0,
+        update_latency_ns=0,
+        cancel_latency_ns=0,
+        fee=FeeModelConfig(
+            kind=FeeModelKind.FIXED,
+            commission=Decimal(0),
+            currency="USD",
+            charge_commission_once=True,
+        ),
+        rollover=RolloverConfig(mode=RolloverMode.DISABLED),
+        adaptive_high_low_ordering=False,
+        calibration_status=CalibrationStatus.UNCALIBRATED,
+    )
+
+
 @dataclass(frozen=True, slots=True)
 class AccountParameters:
     """Runtime account parameters; no FTMO values are assumed."""

@@ -135,8 +135,8 @@ def test_rejects_cross_field_inconsistency(
 def test_registry_declares_no_runtime_evidence() -> None:
     entries = load_experiment_registry(REGISTRY_PATH)
 
-    assert len(entries) == 1
-    entry = entries[0]
+    assert len(entries) == 2
+    entry = next(item for item in entries if item.strategy_id == "trend_pullback_v1")
     assert entry.status == "specified_not_run"
     assert entry.strategy_config_sha256 == EXPECTED_CONFIG_SHA256
     assert entry.git_commit == ""
@@ -145,6 +145,30 @@ def test_registry_declares_no_runtime_evidence() -> None:
     assert entry.engine_version == ""
     assert entry.run_seed == ""
     assert entry.primary_metric_value == ""
+    assert entry.decision == "not_evaluated"
+
+
+def test_leo_preregistration_registry_row_declares_no_runtime_evidence() -> None:
+    entries = load_experiment_registry(REGISTRY_PATH)
+    entry = next(item for item in entries if item.strategy_id == "leo_gbpusd_v1")
+
+    assert entry.status == "specified_not_run"
+    assert entry.strategy_config_sha256 == (
+        "5c89c825db340c49f10c18fdc3982b03f23ade718a5889e4e2ef662081abbf4c"
+    )
+    assert all(
+        getattr(entry, field) == ""
+        for field in (
+            "git_commit",
+            "data_manifest_sha256",
+            "execution_profile_sha256",
+            "engine_version",
+            "run_seed",
+            "started_at",
+            "completed_at",
+            "primary_metric_value",
+        )
+    )
     assert entry.decision == "not_evaluated"
 
 

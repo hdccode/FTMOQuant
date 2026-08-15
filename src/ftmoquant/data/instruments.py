@@ -167,12 +167,18 @@ GBPUSD_SPEC = InstrumentSpec(
 
 
 def to_nautilus_bars(
-    rows: Sequence[SourceBar], side: str, instrument: InstrumentSpec
+    rows: Sequence[SourceBar],
+    side: str,
+    instrument: InstrumentSpec,
+    *,
+    minutes: int = 1,
 ) -> list[Bar]:
     """Encode source bars using only precision and identity from the spec."""
 
     instrument.validate()
-    bar_type = instrument.bar_type(minutes=1, side=side, aggregation="EXTERNAL")
+    if minutes <= 0:
+        raise InstrumentSpecValidationError("bar interval minutes must be positive")
+    bar_type = instrument.bar_type(minutes=minutes, side=side, aggregation="EXTERNAL")
     price_quantum = Decimal(1).scaleb(-instrument.price_precision)
     size_quantum = Decimal(1).scaleb(-instrument.size_precision)
 
@@ -208,7 +214,10 @@ def to_nautilus_bars(
             pa.array([size_bytes(row.volume) for row in rows], type=pa.binary(16)),
             pa.array([timestamp_ns(row.timestamp) for row in rows], type=pa.uint64()),
             pa.array(
-                [timestamp_ns(row.timestamp + timedelta(minutes=1)) for row in rows],
+                [
+                    timestamp_ns(row.timestamp + timedelta(minutes=minutes))
+                    for row in rows
+                ],
                 type=pa.uint64(),
             ),
         ]

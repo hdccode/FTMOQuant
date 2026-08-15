@@ -959,7 +959,7 @@ def _validate_registry_entry(entry: ExperimentRegistryEntry, row_number: int) ->
     ):
         if not getattr(entry, field).strip():
             raise ExperimentRegistryValidationError(f"{prefix} {field} cannot be blank")
-    if entry.strategy_id != "trend_pullback_v1":
+    if entry.strategy_id not in {"trend_pullback_v1", "leo_gbpusd_v1"}:
         raise ExperimentRegistryValidationError(f"{prefix} has an unknown strategy_id")
     if entry.primary_metric != "validation_mean_net_r_per_trade":
         raise ExperimentRegistryValidationError(

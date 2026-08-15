@@ -1,0 +1,69 @@
+schema_version: 1
+strategy_id: ts_momentum_v1
+version: 1.0.0
+status: implemented_not_evaluated
+
+universe:
+  universe_id: g1_4_fx_usd_liquid_v1
+  universe_plan_sha256: 16c29df7bae3bde0a9e64e2cc7758f158186182a3d7a464347791400abcfff69
+  universe_readiness_sha256: e6d511bb7bbea6b80c42b00c3f1b4c79ea35cd4532d5f71b69ee8f43bea3f8a0
+  ordered_instruments:
+    - EUR/USD.DUKASCOPY
+    - GBP/USD.DUKASCOPY
+
+data_semantics:
+  source: stage_g_synchronized_observed_1m_bid_ask_closes
+  midpoint: (bid_close_plus_ask_close)_divided_by_2
+  daily_session_timezone: America/New_York
+  daily_session_close: "17:00"
+  daily_eligible_weekdays:
+    - Monday
+    - Tuesday
+    - Wednesday
+    - Thursday
+    - Friday
+  daily_close_rule: observed_1m_pair_with_information_time_at_session_close
+  missing_or_invalid_rule: no_signal_and_not_an_eligible_history_observation
+  fill_or_interpolation: false
+  instruments_are_independent: true
+
+signal:
+  native_indicator: nautilus_trader.indicators.RateOfChange
+  native_use_log: true
+  native_period: 253
+  lookback_prior_eligible_observations: 252
+  formula: ln(C_t / C_(t-252))
+  positive_target: 1
+  negative_target: -1
+  zero_target: 0
+  insufficient_history: no_signal
+  emit_only_when_target_changes: true
+  target_hold_rule: hold_latest_valid_target_until_changed
+
+execution:
+  output: raw_directional_target_only
+  admitted_targets:
+    - -1
+    - 0
+    - 1
+  eligible_point: synchronized_tradable_stage_g_execution_frame
+  timing_rule: first_eligible_information_time_strictly_after_signal_information_time
+  engine: existing_nautilus_g0_7_boundary
+  parallel_backtester: false
+  strategy_sizing: false
+  ftmo_optimization: false
+
+research_boundary:
+  development_start_utc: "2019-03-11T00:00:00Z"
+  development_end_exclusive_utc: "2023-04-11T00:00:00Z"
+  development_folds_version: g1.4b-development-folds-1
+  development_folds_sha256: 805687e8657c1482d5f8cff4b513385eebfc6a62795735fd4b390019b2e1fdfe
+  fold_warmup_rule: train_interval_updates_history_but_emits_no_executable_target
+  fold_comparison_rule: targets_may_originate_only_inside_comparison_interval
+  validation: locked
+  final_holdout: locked
+  strategy_returns_accessed: false
+
+parameter_family:
+  mode: baseline_only
+  permitted_variants: []

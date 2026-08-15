@@ -1,0 +1,57 @@
+schema_version: 1
+strategy_id: liquidity_shock_reversion_v1
+version: 1.0.0
+status: implemented_not_evaluated
+
+universe:
+  universe_id: g1_4_fx_usd_liquid_v1
+  universe_plan_sha256: 16c29df7bae3bde0a9e64e2cc7758f158186182a3d7a464347791400abcfff69
+  universe_readiness_sha256: e6d511bb7bbea6b80c42b00c3f1b4c79ea35cd4532d5f71b69ee8f43bea3f8a0
+  ordered_instruments: [EUR/USD.DUKASCOPY, GBP/USD.DUKASCOPY]
+
+data_semantics:
+  source: stage_g_synchronized_completed_1m_bid_ask_closes
+  midpoint: (bid_close_plus_ask_close)_divided_by_2
+  return_formula: ln(C_t_divided_by_C_t_minus_1)
+  eligible_return: consecutive_observed_valid_completed_1m_midpoint_closes
+  missing_or_invalid_rule: no_signal_and_not_an_eligible_return
+  fill_or_interpolation: false
+  instruments_are_independent: true
+
+signal:
+  baseline_scale: median_absolute_log_return
+  baseline_prior_eligible_returns: 60
+  shock_rule: absolute_r_t_strictly_greater_than_5_times_baseline_scale
+  positive_shock_target: -1
+  negative_shock_target: 1
+  zero_or_invalid_scale: no_signal
+  insufficient_history: no_signal
+  signals_while_position_or_pending: ignore
+
+execution:
+  output: raw_directional_target_only
+  admitted_targets: [-1, 0, 1]
+  eligible_point: synchronized_tradable_stage_g_execution_frame
+  entry_timing_rule: first_eligible_information_time_strictly_after_signal_information_time
+  hold_eligible_completed_minutes_after_entry: 15
+  exit_timing_rule: flat_at_first_eligible_information_time_strictly_after_fifteenth_eligible_completed_minute_after_entry
+  max_open_positions_per_instrument: 1
+  engine: existing_nautilus_g0_7_boundary
+  parallel_backtester: false
+  strategy_sizing: false
+  ftmo_optimization: false
+
+research_boundary:
+  development_start_utc: "2019-03-11T00:00:00Z"
+  development_end_exclusive_utc: "2023-04-11T00:00:00Z"
+  development_folds_version: g1.4b-development-folds-1
+  development_folds_sha256: 805687e8657c1482d5f8cff4b513385eebfc6a62795735fd4b390019b2e1fdfe
+  fold_warmup_rule: train_interval_updates_history_but_emits_no_executable_target
+  fold_comparison_rule: targets_may_originate_only_inside_comparison_interval_and_state_resets_at_fold_boundary
+  validation: locked
+  final_holdout: locked
+  strategy_returns_accessed: false
+
+parameter_family:
+  mode: baseline_only
+  permitted_variants: []

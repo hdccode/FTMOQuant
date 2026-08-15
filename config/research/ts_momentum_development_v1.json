@@ -1,0 +1,37 @@
+{
+  "account": {
+    "currency": "USD",
+    "initial_capital": "100000",
+    "leverage": "30"
+  },
+  "cost_models": [
+    {
+      "execution_profile_sha256": "5bfb0349fff97a08a8b5d97a6e79b39c694a9038730e1be1e5dcb3f66b3f29cc",
+      "execution_profile_source": "canonical_g0_7_uncalibrated_baseline",
+      "instrument_id": "EUR/USD.DUKASCOPY",
+      "spread_source": "observed_paired_bid_ask"
+    },
+    {
+      "execution_profile_sha256": "5bfb0349fff97a08a8b5d97a6e79b39c694a9038730e1be1e5dcb3f66b3f29cc",
+      "execution_profile_source": "canonical_g0_7_uncalibrated_baseline",
+      "instrument_id": "GBP/USD.DUKASCOPY",
+      "spread_source": "observed_paired_bid_ask"
+    }
+  ],
+  "currency_exposure_limits": {
+    "derivation": "initial_capital_times_leverage_in_each_frozen_currency",
+    "max_abs_amount": {
+      "EUR": "3000000",
+      "GBP": "3000000",
+      "USD": "3000000"
+    }
+  },
+  "fixed_research_exposure": {
+    "base_units_per_nonzero_target": "100000",
+    "derivation": "existing_g0_7_canonical_round_trip_probe_quantity",
+    "portfolio_daily_return_denominator": "100000"
+  },
+  "schema": "ftmoquant.ts-momentum-development-evaluation",
+  "schema_version": 1,
+  "semantic_sha256": "6764e2bc41cc92cecd050419bb003da82db2960c3f9feb909b75e0be139a2ba2"
+}

@@ -785,3 +785,103 @@ project facilities without improving the leakage boundary. Currency-incidence
 aggregation and DEVELOPMENT manifest validation are narrow FTMOQuant seams not
 provided by the pinned versions with the required frozen hashes and fail-closed
 split policy.
+
+## G1.4C Phase 1 time-series momentum audit
+
+This audit was completed before implementing `ts_momentum_v1`. It was limited
+to reusable indicator, daily-history, causal scheduling, and target/execution
+facilities; no strategy returns or market-data rows were inspected.
+
+| Repository | Version / commit | License | Role and adoption | Modifications and validation |
+| --- | --- | --- | --- | --- |
+| [nautechsystems/nautilus_trader](https://github.com/nautechsystems/nautilus_trader/tree/7f0e93dfa3f09ca165a5f3292a45fafbb5681561) | Existing pinned `nautilus-trader==2.0.0rc2`; source reference `7f0e93dfa3f09ca165a5f3292a45fafbb5681561`; current audit head `409214a9d2d23ecae72a7d9376b06afc1ecc7694` | LGPL-3.0-or-later | Adopted the installed native `RateOfChange(use_log=True)` indicator and retained the existing Nautilus execution boundary. | No source was copied. An installed-wheel probe established that native `period` is the total window length: `period=253` gives the frozen current-versus-252-prior-observation logarithmic change. Synthetic differential tests validate the native output against `ln(C_t/C_(t-252))`. Generic native daily time bars were not adopted because they do not encode the provider-specific 17:00 `America/New_York` close across DST. |
+| [quantopian/zipline](https://github.com/quantopian/zipline/tree/014f1fc339dc8b7671d29be2d85ce57d3daec343) | `014f1fc339dc8b7671d29be2d85ce57d3daec343` | Apache-2.0 | Reference-only review of daily history windows, scheduled callbacks, and `order_target`. | Not adopted: its separate data portal, calendar, order, portfolio, and simulation stack would duplicate Stage G and Nautilus, while its APIs do not provide the frozen readiness hashes or strictly-later synchronized execution contract. |
+| [polakowo/vectorbt](https://github.com/polakowo/vectorbt/tree/34b6d5935e3ea3eccd549e2592bc0f455b8045f5) | `34b6d5935e3ea3eccd549e2592bc0f455b8045f5` | Apache-2.0 with Commons Clause | Reference-only review of vectorized signal/portfolio construction. | Not adopted: it would add a parallel backtester, fill/cost model, and portfolio accounting path. No code or implementation pattern was copied. |
+
+The remaining project code is deliberately narrow: it recognizes the frozen
+Dukascopy session close from observed Stage G frames, keeps independent
+per-instrument native ROC state, maps only the sign to `{-1, 0, +1}`, and holds
+changed targets until the first synchronized tradable frame whose information
+time is strictly later. Stage G continues to own data admission, clock
+alignment, folds, costs, currency exposure, limits, and tournament statistics.
+
+## G1.4C Phase 2 DEVELOPMENT evaluator audit
+
+This bounded audit was completed before evaluator implementation. It covered
+only the pinned engine/report and statistical APIs needed to connect the
+already-frozen candidate to Stage G. No market rows, strategy returns,
+validation data, or final-holdout data were opened.
+
+| Repository | Version / commit | License | Role and adoption | Modifications and validation |
+| --- | --- | --- | --- | --- |
+| [nautechsystems/nautilus_trader](https://github.com/nautechsystems/nautilus_trader/tree/7f0e93dfa3f09ca165a5f3292a45fafbb5681561) | Existing pinned `nautilus-trader==2.0.0rc2`; source reference `7f0e93dfa3f09ca165a5f3292a45fafbb5681561` | LGPL-3.0-or-later | Adopted the existing low-level `BacktestEngine` pattern: add the frozen instruments and BID/ASK bars, add one thin target-to-order strategy, run deterministically, then use native account/order/fill/position state and reports. The installed native `Position.unrealized_pnl` remains the liquidation-side open-position valuation primitive. | No upstream source was copied. The evaluator reuses FTMOQuant's G0.7 engine, venue, fee, latency, slippage, rollover, and report adapters. Synthetic engine tests cover target execution and provenance. A direct native oracle proves that `RateOfChange(period=253, use_log=True)` is exactly the frozen 252-prior-observation log change. |
+| [bashtage/arch](https://github.com/bashtage/arch/tree/v8.0.0) | Existing pinned `arch==8.0.0`, tag `v8.0.0` | NCSA | Reuses the existing tested FTMOQuant wrappers for the preregistered stationary-bootstrap mean interval and SPA comparison with zero return. | No source was copied or modified. The evaluator supplies deterministic DEVELOPMENT-only daily series to the wrappers. MCS is explicitly not run for a one-candidate family because the existing wrapper correctly requires at least two models. |
+
+No additional backtester, portfolio framework, cost package, experiment tracker,
+or statistics package was adopted. Such a dependency would duplicate the
+already-pinned Nautilus and `arch` boundaries. The local code is restricted to
+DEVELOPMENT admission, frozen-fold orchestration, raw-target order adaptation,
+currency-incidence limit checks, metric presentation, and deterministic
+artifact provenance.
+
+The follow-up artifact-materialization audit reached the same reuse decision.
+Nautilus owns the cost semantics, while FTMOQuant's tracked frozen Phase 2 JSON
+owns their repository identity. The smallest generator is therefore an exact
+byte copy to the one reserved artifact path followed by the existing semantic,
+instrument-order, and canonical-profile hash validation; no serializer,
+estimator, calibration step, or additional dependency was added.
+
+## G1.4D Phase 1 session-range expansion audit
+
+This bounded pre-implementation audit covered only timestamp/session handling,
+raw target scheduling, and the existing Stage G fold boundary. No market rows,
+returns, validation data, or final-holdout data were opened.
+
+| Repository | Version / commit | License | Role and adoption | Modifications and validation |
+| --- | --- | --- | --- | --- |
+| [nautechsystems/nautilus_trader](https://github.com/nautechsystems/nautilus_trader/tree/7f0e93dfa3f09ca165a5f3292a45fafbb5681561) | Existing pinned `nautilus-trader==2.0.0rc2`; source reference `7f0e93dfa3f09ca165a5f3292a45fafbb5681561` | LGPL-3.0-or-later | Reference for UTC-native event timestamps and the existing Stage G/Nautilus execution boundary. | No source was copied. The candidate keeps the provider-specific London session definition in a small `ZoneInfo("Europe/London")` state machine, then reuses Stage G’s synchronized frame and strict-later execution semantics. Synthetic winter/summer tests validate DST conversion and session boundaries. |
+| Python standard library `zoneinfo` | Python 3.12 runtime | PSF | Adopted for IANA `Europe/London` conversion; it adds no dependency or trading calendar layer. | No external calendar, backtester, or session framework was adopted. A fixed 480-completed-minute invariant rejects incomplete session ranges without filling prices. |
+
+Zipline, vectorized portfolio frameworks, and external calendar/session packages
+were not adopted because they would duplicate Stage G synchronization, frozen
+fold admission, and the existing Nautilus execution boundary. The Phase 1 code
+only records a range, maps the first breakout to a raw target, schedules the
+16:00 flat target, and resets state per fold.
+
+## G1.4D Phase 2 session-range evaluator audit
+
+This bounded pre-implementation audit covered only the existing G1.4C
+DEVELOPMENT evaluator seam, Stage G candidate/evaluation interfaces, and the
+published upstream execution/statistics integrations. No market rows, returns,
+validation data, or final-holdout data were opened.
+
+| Repository | Version / commit | License | Role and adoption | Modifications and validation |
+| --- | --- | --- | --- | --- |
+| [nautechsystems/nautilus_trader](https://github.com/nautechsystems/nautilus_trader/tree/7f0e93dfa3f09ca165a5f3292a45fafbb5681561) | Existing pinned `nautilus-trader==2.0.0rc2`; source reference `7f0e93dfa3f09ca165a5f3292a45fafbb5681561` | LGPL-3.0-or-later | Reused through the existing G1.4C native order adapter, causal timestamp handling, G0.7 execution profile, and reports. | No source or replacement engine was added. The session adapter supplies only frozen raw targets to the shared evaluator. |
+| [bashtage/arch](https://github.com/bashtage/arch) | Existing pinned project dependency | NCSA | Reused through the existing Stage G stationary-bootstrap and SPA wrappers. | No statistics implementation, parameter search, or new dependency was added. |
+
+The adopted path was to factor the existing G1.4C orchestration into one
+candidate-parameterized, DEVELOPMENT-only evaluator and add a small
+session-range raw-target adapter. It auto-materializes the already-frozen
+canonical cost artifact as the validated byte-identical tracked configuration.
+No parallel backtester, cost model, portfolio model, provenance system, or
+statistics runner was created.
+
+### G1.4D incomplete-frame release fix
+
+The bounded GitHub-first re-audit reconfirmed the existing Nautilus native
+`BacktestEngine` as the sole execution boundary; its documented UTC,
+nanosecond, timestamp-ordered processing is unchanged. No dependency or source
+code was adopted. The local session adapter now withholds a pending raw target
+from the shared native instruction converter until its strictly-later Stage G
+frame is both tradable and has valid synchronized prices. This reuses the
+existing pending-target state and preserves it across incomplete frames rather
+than adding an execution queue or alternate engine.
+
+### G1.4D metadata-label cleanup
+
+The bounded GitHub-first audit of the existing `arch` integration confirmed that
+the model label is supplied by the input series/DataFrame. The shared evaluator
+now derives that label from the frozen candidate ID, preserving all numerical
+inputs, bootstrap/SPA settings, and execution behavior. No dependency, source
+code, or statistics implementation was added.

@@ -8,15 +8,38 @@ from dataclasses import asdict, dataclass
 from enum import StrEnum
 from typing import Any
 
+from ftmoquant.research.leo_gbpusd_spec import (
+    LEO_GBPUSD_CONFIG_SHA256,
+    LEO_GBPUSD_SPEC_PATH,
+)
+from ftmoquant.research.liquidity_shock_reversion_spec import (
+    LIQUIDITY_SHOCK_REVERSION_CONFIG_SHA256,
+    LIQUIDITY_SHOCK_REVERSION_SPEC_PATH,
+)
+from ftmoquant.research.session_range_expansion_spec import (
+    SESSION_RANGE_EXPANSION_CONFIG_SHA256,
+    SESSION_RANGE_EXPANSION_SPEC_PATH,
+)
 from ftmoquant.research.stage_g import FROZEN_INSTRUMENT_IDS
+from ftmoquant.research.ts_momentum_spec import (
+    TS_MOMENTUM_CONFIG_SHA256,
+    TS_MOMENTUM_SPEC_PATH,
+)
 
-TOURNAMENT_REGISTRY_VERSION = "g1.4b-candidate-registry-1"
+TOURNAMENT_REGISTRY_VERSION = "g1.4e-candidate-registry-5"
 SELECTION_CONTRACT_VERSION = "g1.4b-selection-contract-1"
 
 
 class CandidateEligibility(StrEnum):
     ELIGIBLE_FOR_IMPLEMENTATION = "eligible_for_implementation"
     BLOCKED_PREREQUISITES = "blocked_prerequisites"
+
+
+class CandidateImplementationStatus(StrEnum):
+    IMPLEMENTED_NOT_EVALUATED = "implemented_not_evaluated"
+    DEVELOPMENT_FAILED_RETIRED = "development_failed_retired"
+    SPECIFIED_NOT_IMPLEMENTED = "specified_not_implemented"
+    BLOCKED_NOT_IMPLEMENTED = "blocked_not_implemented"
 
 
 @dataclass(frozen=True, slots=True)
@@ -39,8 +62,11 @@ class CandidateRegistryEntry:
     candidate_id: str
     family: str
     eligibility: CandidateEligibility
+    implementation_status: CandidateImplementationStatus
     prerequisites: tuple[str, ...]
     unmet_prerequisites: tuple[str, ...]
+    spec_path: str | None
+    strategy_config_sha256: str | None
     strategy_logic_present: bool = False
     results_accessed: bool = False
 
@@ -100,6 +126,13 @@ _CANDIDATES = (
         None,
     ),
     CandidateDefinition(
+        "leo_gbpusd_v1",
+        "session",
+        ("synchronized_development_clock", "cost_profile", "exposure_limits"),
+        False,
+        None,
+    ),
+    CandidateDefinition(
         "session_regime_hybrid_v1",
         "session",
         ("synchronized_development_clock", "cost_profile", "exposure_limits"),
@@ -136,17 +169,63 @@ def candidate_registry(
                 "minimum_cross_sectional_instruments="
                 f"{candidate.minimum_cross_sectional_instruments}"
             )
+        eligibility = (
+            CandidateEligibility.ELIGIBLE_FOR_IMPLEMENTATION
+            if not unmet
+            else CandidateEligibility.BLOCKED_PREREQUISITES
+        )
+        implemented = {
+            "ts_momentum_v1": (
+                TS_MOMENTUM_SPEC_PATH.as_posix(),
+                TS_MOMENTUM_CONFIG_SHA256,
+            ),
+            "session_range_expansion_v1": (
+                SESSION_RANGE_EXPANSION_SPEC_PATH.as_posix(),
+                SESSION_RANGE_EXPANSION_CONFIG_SHA256,
+            ),
+            "liquidity_shock_reversion_v1": (
+                LIQUIDITY_SHOCK_REVERSION_SPEC_PATH.as_posix(),
+                LIQUIDITY_SHOCK_REVERSION_CONFIG_SHA256,
+            ),
+            "leo_gbpusd_v1": (
+                LEO_GBPUSD_SPEC_PATH.as_posix(),
+                LEO_GBPUSD_CONFIG_SHA256,
+            ),
+        }
+        implementation = implemented.get(candidate.candidate_id)
+        is_implemented = implementation is not None
         entries.append(
             CandidateRegistryEntry(
                 candidate_id=candidate.candidate_id,
                 family=candidate.family,
-                eligibility=(
-                    CandidateEligibility.ELIGIBLE_FOR_IMPLEMENTATION
-                    if not unmet
-                    else CandidateEligibility.BLOCKED_PREREQUISITES
+                eligibility=eligibility,
+                implementation_status=(
+                    CandidateImplementationStatus.DEVELOPMENT_FAILED_RETIRED
+                    if candidate.candidate_id
+                    in {
+                        "session_range_expansion_v1",
+                        "liquidity_shock_reversion_v1",
+                    }
+                    else CandidateImplementationStatus.IMPLEMENTED_NOT_EVALUATED
+                    if is_implemented
+                    else CandidateImplementationStatus.SPECIFIED_NOT_IMPLEMENTED
+                    if eligibility is CandidateEligibility.ELIGIBLE_FOR_IMPLEMENTATION
+                    else CandidateImplementationStatus.BLOCKED_NOT_IMPLEMENTED
                 ),
                 prerequisites=candidate.prerequisites,
                 unmet_prerequisites=tuple(unmet),
+                spec_path=(implementation[0] if implementation is not None else None),
+                strategy_config_sha256=(
+                    implementation[1] if implementation is not None else None
+                ),
+                strategy_logic_present=is_implemented,
+                results_accessed=(
+                    candidate.candidate_id
+                    in {
+                        "session_range_expansion_v1",
+                        "liquidity_shock_reversion_v1",
+                    }
+                ),
             )
         )
     payload = {
