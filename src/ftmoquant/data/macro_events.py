@@ -84,6 +84,7 @@ _HANOVER_POSITIONAL_FIELDS = (
     "actual_better_worse",
     "previous_better_worse",
 )
+_HANOVER_DATE_FORMAT = "%Y.%m.%d"
 
 
 class MacroEventImportError(ValueError):
@@ -148,7 +149,9 @@ def import_historical_calendar(
     quarantined: list[dict[str, Any]] = []
     scope_excluded = 0
     for row in raw_rows:
-        candidate, reason = _normalize_row(row, zone, timezone_name)
+        candidate, reason = _normalize_row(
+            row, zone, timezone_name, strict_hanover_utc_schema
+        )
         if reason == "out_of_scope":
             scope_excluded += 1
         elif reason is not None:
@@ -166,8 +169,16 @@ def import_historical_calendar(
     )
     retained, duplicate_quarantine = _quarantine_exact_duplicates(normalized)
     quarantined.extend(duplicate_quarantine)
-    qa = _qa_report(raw_rows, retained, quarantined, scope_excluded, zone)
-    cross_check = _cross_check(retained, secondary_input, zone, timezone_name)
+    qa = _qa_report(
+        raw_rows, retained, quarantined, scope_excluded, zone, strict_hanover_utc_schema
+    )
+    cross_check = _cross_check(
+        retained,
+        secondary_input,
+        zone,
+        timezone_name,
+        strict_hanover_utc_schema,
+    )
     qa["secondary_cross_check"] = cross_check
 
     destination = output_dir.resolve()
@@ -386,7 +397,10 @@ def _map_headers(headers: Sequence[str], path: Path) -> dict[str, str]:
 
 
 def _normalize_row(
-    row: dict[str, Any], zone: ZoneInfo, timezone_name: str
+    row: dict[str, Any],
+    zone: ZoneInfo,
+    timezone_name: str,
+    strict_hanover_utc_schema: bool = False,
 ) -> tuple[dict[str, Any] | None, str | None]:
     fields = row["fields"]
     currency = fields["currency"].upper()
@@ -394,7 +408,9 @@ def _normalize_row(
     family = _event_family(currency, description)
     if family is None:
         return None, "out_of_scope"
-    timestamp, timestamp_reason = _parse_timestamp(fields["date"], fields["time"], zone)
+    timestamp, timestamp_reason = _parse_timestamp(
+        fields["date"], fields["time"], zone, strict_hanover_utc_schema
+    )
     if timestamp_reason:
         return None, timestamp_reason
     parsed = {
@@ -453,12 +469,20 @@ def _event_family(currency: str, description: str) -> str | None:
 
 
 def _parse_timestamp(
-    raw_date: str, raw_time: str, zone: ZoneInfo
+    raw_date: str,
+    raw_time: str,
+    zone: ZoneInfo,
+    strict_hanover_utc_schema: bool = False,
 ) -> tuple[datetime, str | None]:
     if raw_time.strip().casefold() in {"all day", "tentative", "", "-"}:
         return datetime.min.replace(tzinfo=UTC), "missing_or_nonexact_timestamp"
     parsed_date: date | None = None
-    for fmt in ("%Y-%m-%d", "%m-%d-%Y", "%m/%d/%Y", "%b %d, %Y", "%d %b %Y"):
+    date_formats = (
+        (_HANOVER_DATE_FORMAT,)
+        if strict_hanover_utc_schema
+        else ("%Y-%m-%d", "%m-%d-%Y", "%m/%d/%Y", "%b %d, %Y", "%d %b %Y")
+    )
+    for fmt in date_formats:
         try:
             parsed_date = datetime.strptime(raw_date.strip(), fmt).date()
             break
@@ -551,6 +575,7 @@ def _qa_report(
     quarantined: list[dict[str, Any]],
     scope_excluded: int,
     zone: ZoneInfo,
+    strict_hanover_utc_schema: bool,
 ) -> dict[str, Any]:
     by_family = Counter(row["event_family"] for row in rows)
     source_numeric = [
@@ -567,10 +592,12 @@ def _qa_report(
         names[row["event_family"]].add(row["event_description_raw"])
     revisions = [row for row in rows if row["revised_previous_raw"]]
     reasons = Counter(item["reason"] for item in quarantined)
-    timestamp_qa = _source_timestamp_qa(raw, zone)
+    timestamp_qa = _source_timestamp_qa(raw, zone, strict_hanover_utc_schema)
     event_ids = [item["fields"].get("event_id", "") for item in raw]
     event_id_duplicates = _duplicate_count(item for item in event_ids if item)
-    source_event_duplicates = _source_event_duplicate_count(raw, zone)
+    source_event_duplicates = _source_event_duplicate_count(
+        raw, zone, strict_hanover_utc_schema
+    )
     groups = defaultdict(set)
     for item in raw:
         group_id = item["fields"].get("group_id", "")
@@ -655,7 +682,9 @@ def _qa_report(
     }
 
 
-def _source_timestamp_qa(raw: list[dict[str, Any]], zone: ZoneInfo) -> dict[str, Any]:
+def _source_timestamp_qa(
+    raw: list[dict[str, Any]], zone: ZoneInfo, strict_hanover_utc_schema: bool
+) -> dict[str, Any]:
     parsed: list[datetime] = []
     failures: Counter[str] = Counter()
     order_violations = 0
@@ -663,7 +692,10 @@ def _source_timestamp_qa(raw: list[dict[str, Any]], zone: ZoneInfo) -> dict[str,
     prior: datetime | None = None
     for item in raw:
         timestamp, reason = _parse_timestamp(
-            item["fields"].get("date", ""), item["fields"].get("time", ""), zone
+            item["fields"].get("date", ""),
+            item["fields"].get("time", ""),
+            zone,
+            strict_hanover_utc_schema,
         )
         if reason is not None:
             failures[reason] += 1
@@ -683,11 +715,16 @@ def _source_timestamp_qa(raw: list[dict[str, Any]], zone: ZoneInfo) -> dict[str,
     }
 
 
-def _source_event_duplicate_count(raw: list[dict[str, Any]], zone: ZoneInfo) -> int:
+def _source_event_duplicate_count(
+    raw: list[dict[str, Any]], zone: ZoneInfo, strict_hanover_utc_schema: bool
+) -> int:
     keys = []
     for item in raw:
         timestamp, reason = _parse_timestamp(
-            item["fields"].get("date", ""), item["fields"].get("time", ""), zone
+            item["fields"].get("date", ""),
+            item["fields"].get("time", ""),
+            zone,
+            strict_hanover_utc_schema,
         )
         if reason is None:
             keys.append(
@@ -713,6 +750,7 @@ def _cross_check(
     secondary: Path | None,
     zone: ZoneInfo,
     timezone_name: str,
+    strict_hanover_utc_schema: bool,
 ) -> dict[str, Any]:
     if secondary is None:
         return {
@@ -724,7 +762,9 @@ def _cross_check(
         }
     secondary_rows = []
     for raw in _read_csv(secondary.resolve()):
-        candidate, reason = _normalize_row(raw, zone, timezone_name)
+        candidate, reason = _normalize_row(
+            raw, zone, timezone_name, strict_hanover_utc_schema
+        )
         if candidate is not None and reason is None:
             secondary_rows.append(candidate)
     primary_keys = {

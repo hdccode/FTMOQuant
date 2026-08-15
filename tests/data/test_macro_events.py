@@ -109,11 +109,11 @@ def test_secondary_cross_check_is_non_authoritative_and_fixed(tmp_path: Path) ->
 
 
 _HANOVER_HEADERLESS = (
-    "2024-03-08,13:30,USD,High,Non-Farm Employment Change, 275K ,200K,"
+    "2007.01.05,13:30,USD,High,Non-Farm Employment Change, 275K ,200K,"
     "353K,290K,100,900, better ,worse\n"
-    "2024-03-12,12:30,USD,High,CPI y/y,3.2%,3.1%,3.1%,,101,901,better,\n"
-    "2024-03-12,12:30,USD,High,CPI y/y,3.2%,3.1%,3.1%,,101,901,better,\n"
-    "2024-03-13,00:00,EUR,Low,Other,foo,,, ,102,901,,\n"
+    "2007.01.12,12:30,USD,High,CPI y/y,3.2%,3.1%,3.1%,,101,901,better,\n"
+    "2007.01.12,12:30,USD,High,CPI y/y,3.2%,3.1%,3.1%,,101,901,better,\n"
+    "2007.01.13,00:00,EUR,Low,Other,foo,,, ,102,901,,\n"
 )
 
 
@@ -145,7 +145,7 @@ def test_strict_2024_utc_headerless_schema_records_field_mapping_and_provenance(
         for line in (output / "normalized_events.jsonl").read_text().splitlines()
     ]
     assert len(events) == 2
-    assert events[0]["timestamp_utc"] == "2024-03-08T13:30:00Z"
+    assert events[0]["timestamp_utc"] == "2007-01-05T13:30:00Z"
     assert events[0]["actual_raw"] == " 275K "
     assert events[0]["actual_better_worse_raw"] == " better "
     assert events[0]["previous_better_worse_raw"] == "worse"
@@ -201,13 +201,33 @@ def test_strict_headerless_csv_inside_zip_records_member_hash(tmp_path: Path) ->
 def test_strict_headerless_schema_rejects_wrong_column_count(tmp_path: Path) -> None:
     source = tmp_path / "invalid.csv"
     source.write_text(
-        "2024-03-08,13:30,USD,High,Non-Farm Employment Change,275K,200K,"
+        "2007.01.05,13:30,USD,High,Non-Farm Employment Change,275K,200K,"
         "353K,290K,100,900,better\n",
         encoding="utf-8",
     )
 
     with pytest.raises(ValueError, match="exactly 13 columns"):
         _strict_import(source, tmp_path / "output")
+
+
+def test_strict_hanover_malformed_date_is_quarantined(tmp_path: Path) -> None:
+    source = tmp_path / "malformed_date.csv"
+    source.write_text(
+        "2007-01-05,13:30,USD,High,Non-Farm Employment Change,275K,200K,"
+        "353K,290K,100,900,better,worse\n",
+        encoding="utf-8",
+    )
+
+    result = _strict_import(source, tmp_path / "output")
+
+    assert result is None
+    quarantine = [
+        json.loads(line)
+        for line in (tmp_path / "output" / "quarantined_events.jsonl")
+        .read_text()
+        .splitlines()
+    ]
+    assert quarantine[0]["reason"] == "malformed_date"
 
 
 def test_strict_headerless_repeated_imports_are_identical(tmp_path: Path) -> None:
