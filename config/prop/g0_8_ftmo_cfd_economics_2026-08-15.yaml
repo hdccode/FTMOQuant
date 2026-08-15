@@ -1,0 +1,40 @@
+schema_version: 1
+snapshot_id: g0_8_ftmo_cfd_deployment_economics_2026_08_15
+version: "2026-08-15"
+verified_on: "2026-08-15"
+server_timezone: Europe/Helsinki
+rollover:
+  status: UNMODELLED
+  warning: Historical FTMO swaps are unavailable and dynamic; net FTMO economics are not fully calibrated.
+research_lot_granularity: unquantized_continuous_targets
+symbols:
+  EUR/USD:
+    contract_size: 100000
+    swing_leverage: 30
+    commission: {kind: fixed_usd_per_lot_per_side, value: "2.50"}
+    sessions: [["00:05", "23:55"]]
+    deployment_lot_metadata: unknown_not_modeled
+  XAU/USD:
+    contract_size: 100
+    swing_leverage: 15
+    commission: {kind: percent_of_traded_notional_per_side, value: "0.000007"}
+    sessions: [["01:05", "23:50"]]
+    deployment_lot_metadata: unknown_not_modeled
+  US500.cash:
+    contract_size: 1
+    swing_leverage: 15
+    commission: {kind: none, value: "0"}
+    sessions: [["01:05", "23:50"]]
+    deployment_lot_metadata: unknown_not_modeled
+  USOIL.cash:
+    contract_size: 100
+    swing_leverage: 15
+    commission: {kind: none, value: "0"}
+    sessions: [["01:05", "23:50"]]
+    deployment_lot_metadata: unknown_not_modeled
+  SOYBEAN.c:
+    contract_size: 1
+    swing_leverage: 1
+    commission: {kind: none, value: "0"}
+    sessions: [["03:05", "15:45"], ["16:35", "21:20"]]
+    deployment_lot_metadata: {minimum_volume: "1.00", volume_step: "1.00", research_quantization: not_modeled}
