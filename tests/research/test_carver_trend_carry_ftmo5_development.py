@@ -1,17 +1,23 @@
 from copy import deepcopy
 from dataclasses import replace
 from datetime import UTC, datetime, timedelta
+from decimal import Decimal
 from pathlib import Path
 
 import pandas as pd  # type: ignore[import-untyped]
 import pytest
 
+import ftmoquant.research.carver_trend_carry_ftmo5_development as carver
+from ftmoquant.prop_rules.g0_8_cfd_economics import load_g08_cfd_economics
 from ftmoquant.research.carver_trend_carry_ftmo5_development import (
     CarverTrendCarryFtmo5EvaluationError,
     causal_carry,
     causal_ewmac,
+    cfd_margin_requirement,
+    cfd_net_pnl,
     combine_forecasts,
     comparison_fold,
+    first_eligible_cfd_execution,
     first_strictly_later_execution,
     stressed_cost,
     verify_reference_sources,
@@ -73,3 +79,71 @@ def test_strict_later_fold_warmup_and_cost_stress() -> None:
         CARVER_TREND_CARRY_FTMO5_CONFIG_SHA256
         == "f2a1eacf7d3adb18938bc7013d9873906b2fc6d5e7f3bf6a68cfd3754e9daa40"
     )
+
+
+def test_all_five_g08_mappings_pnl_commission_margin_and_sessions() -> None:
+    economics = load_g08_cfd_economics()
+    mappings = {
+        "EUR/USD.DUKASCOPY": "EUR/USD",
+        "XAU/USD.DUKASCOPY": "XAU/USD",
+        "USA500.DUKASCOPY": "US500.cash",
+        "LIGHT.CMD/USD.DUKASCOPY": "USOIL.cash",
+        "SOYBEAN.CMD/USD.DUKASCOPY": "SOYBEAN.c",
+    }
+    assert set(mappings) == set(carver._MAPPING)
+    assert cfd_net_pnl(
+        economics, "EUR/USD.DUKASCOPY", 1, Decimal("1"), Decimal("1.01"), Decimal("1")
+    ) == Decimal("995.000")
+    assert cfd_net_pnl(
+        economics,
+        "XAU/USD.DUKASCOPY",
+        1,
+        Decimal("2000"),
+        Decimal("2010"),
+        Decimal("1"),
+    ) == Decimal("997.193000")
+    assert cfd_net_pnl(
+        economics, "USA500.DUKASCOPY", 1, Decimal("5000"), Decimal("5010"), Decimal("1")
+    ) == Decimal("10")
+    assert cfd_net_pnl(
+        economics,
+        "LIGHT.CMD/USD.DUKASCOPY",
+        1,
+        Decimal("70"),
+        Decimal("71"),
+        Decimal("1"),
+    ) == Decimal("100")
+    assert cfd_net_pnl(
+        economics,
+        "SOYBEAN.CMD/USD.DUKASCOPY",
+        1,
+        Decimal("1200"),
+        Decimal("1210"),
+        Decimal("1"),
+    ) == Decimal("10")
+    assert cfd_margin_requirement(
+        economics, "USA500.DUKASCOPY", Decimal("5000"), Decimal("1")
+    ) == Decimal("333.3333333333333333333333333")
+    signal = datetime(2026, 7, 6, 13, 0, tzinfo=UTC)
+    assert first_eligible_cfd_execution(
+        signal,
+        (signal, datetime(2026, 7, 6, 14, 40, tzinfo=UTC)),
+        "SOYBEAN.CMD/USD.DUKASCOPY",
+        economics,
+    ) == datetime(2026, 7, 6, 14, 40, tzinfo=UTC)
+
+
+def test_g08_sha_drift_fails_closed_and_rollover_warning_propagates(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    economics = load_g08_cfd_economics()
+    monkeypatch.setattr(
+        carver,
+        "load_g08_cfd_economics",
+        lambda: replace(economics, semantic_sha256="0" * 64),
+    )
+    with pytest.raises(
+        CarverTrendCarryFtmo5EvaluationError, match="G0.8 economics SHA drifted"
+    ):
+        carver._frozen_g08_economics()
+    assert "not fully calibrated" in economics.rollover_warning

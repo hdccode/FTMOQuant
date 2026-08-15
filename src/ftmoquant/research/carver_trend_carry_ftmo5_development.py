@@ -1,11 +1,4 @@
-"""DEVELOPMENT-only Carver signal primitives and fail-closed CFD evaluator gate.
-
-The repository's native G0.7/Stage G execution layer currently represents only
-the frozen EUR/USD and GBP/USD FX universe.  This module therefore exposes the
-causal signal and evaluation contracts, but rejects a real five-CFD execution
-request rather than inventing contract economics for metals, indices, energy,
-and agricultural CFDs.
-"""
+"""DEVELOPMENT-only Carver signal primitives and G0.8 CFD preflight."""
 
 from __future__ import annotations
 
@@ -14,10 +7,17 @@ import hashlib
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from datetime import UTC, datetime
+from decimal import Decimal
 from pathlib import Path
 
 import pandas as pd  # type: ignore[import-untyped]
 
+from ftmoquant.prop_rules.g0_8_cfd_economics import (
+    G0_8_CFD_ECONOMICS_SHA256,
+    G08CfdEconomics,
+    G08CfdEconomicsError,
+    load_g08_cfd_economics,
+)
 from ftmoquant.research.carver_trend_carry_ftmo5_spec import (
     CARVER_TREND_CARRY_FTMO5_CONFIG_SHA256,
     CarverTrendCarryFtmo5Spec,
@@ -27,20 +27,16 @@ from ftmoquant.research.stage_g import frozen_development_folds
 
 EVALUATOR_VERSION = "g1.4g-carver-trend-carry-ftmo5-development-1"
 _MAPPING = {
-    "EUR": "EUR/USD.DUKASCOPY",
-    "GOLD": "XAU/USD.DUKASCOPY",
-    "SP500": "USA500.DUKASCOPY",
-    "CRUDE_W": "LIGHT.CMD/USD.DUKASCOPY",
-    "SOYBEAN": "SOYBEAN.CMD/USD.DUKASCOPY",
+    "EUR/USD.DUKASCOPY": "EUR/USD",
+    "XAU/USD.DUKASCOPY": "XAU/USD",
+    "USA500.DUKASCOPY": "US500.cash",
+    "LIGHT.CMD/USD.DUKASCOPY": "USOIL.cash",
+    "SOYBEAN.CMD/USD.DUKASCOPY": "SOYBEAN.c",
 }
 
 
 class CarverTrendCarryFtmo5EvaluationError(ValueError):
     """Raised when a DEVELOPMENT request cannot preserve frozen semantics."""
-
-
-class UnsupportedCfdExecutionEconomics(CarverTrendCarryFtmo5EvaluationError):
-    """Raised instead of assigning unproven contract/basis economics to a CFD."""
 
 
 @dataclass(frozen=True, slots=True)
@@ -146,6 +142,51 @@ def first_strictly_later_execution(
     return next((item for item in ordered if item > signal_timestamp), None)
 
 
+def first_eligible_cfd_execution(
+    signal_timestamp: datetime,
+    execution_timestamps: Sequence[datetime],
+    execution_instrument: str,
+    economics: G08CfdEconomics,
+) -> datetime | None:
+    """Require strict later causality and a G0.8 FTMO trading-session opening."""
+    economics_symbol = _economics_symbol(execution_instrument)
+    if first_strictly_later_execution(signal_timestamp, execution_timestamps) is None:
+        return None
+    eligible = [
+        timestamp
+        for timestamp in execution_timestamps
+        if timestamp > signal_timestamp
+        and economics.is_session_eligible(economics_symbol, timestamp)
+    ]
+    return eligible[0] if eligible else None
+
+
+def cfd_net_pnl(
+    economics: G08CfdEconomics,
+    execution_instrument: str,
+    direction: int,
+    entry: Decimal,
+    exit: Decimal,
+    lots: Decimal,
+) -> Decimal:
+    """Gross CFD P/L less independent entry/exit commissions; spread is observed."""
+    symbol = _economics_symbol(execution_instrument)
+    return (
+        economics.gross_pnl(symbol, direction, entry, exit, lots)
+        - economics.side_commission(symbol, entry, lots)
+        - economics.side_commission(symbol, exit, lots)
+    )
+
+
+def cfd_margin_requirement(
+    economics: G08CfdEconomics, execution_instrument: str, price: Decimal, lots: Decimal
+) -> Decimal:
+    """Use frozen swing margin without quantizing continuous research lots."""
+    return economics.margin_requirement(
+        _economics_symbol(execution_instrument), price, lots
+    )
+
+
 def stressed_cost(base_cost: float) -> tuple[float, float]:
     """Return frozen base and 1.5x stress cost without a new cost assumption."""
     if base_cost < 0:
@@ -155,22 +196,46 @@ def stressed_cost(base_cost: float) -> tuple[float, float]:
 
 def validate_development_request(
     reference_root: Path, execution_roots: Mapping[str, Path]
-) -> None:
-    """Validate provenance/mapping, then explicitly reject unsupported CFD economics."""
+) -> dict[str, str]:
+    """Validate frozen provenance and G0.8 mapping without loading price data."""
     spec = load_carver_trend_carry_ftmo5_spec()
     if spec.semantic_sha256 != CARVER_TREND_CARRY_FTMO5_CONFIG_SHA256:
         raise CarverTrendCarryFtmo5EvaluationError("candidate semantic SHA drifted")
     verify_reference_sources(reference_root, spec)
-    if set(execution_roots) != set(_MAPPING.values()):
+    if set(execution_roots) != set(_MAPPING):
         raise CarverTrendCarryFtmo5EvaluationError(
             "execution roots do not match frozen five-CFD mapping"
         )
-    unsupported = sorted(set(execution_roots) - {"EUR/USD.DUKASCOPY"})
-    if unsupported:
-        raise UnsupportedCfdExecutionEconomics(
-            "existing G0.7 Stage G execution does not prove CFD contract "
-            "economics for: " + ", ".join(unsupported)
-        )
+    economics = _frozen_g08_economics()
+    for instrument, symbol in _MAPPING.items():
+        try:
+            economics.contract(symbol)
+        except G08CfdEconomicsError as error:
+            raise CarverTrendCarryFtmo5EvaluationError(
+                f"missing frozen G0.8 economics for {instrument}"
+            ) from error
+    return {
+        "g0_8_semantic_sha256": economics.semantic_sha256,
+        "rollover_status": "UNMODELLED",
+        "rollover_warning": economics.rollover_warning,
+        "results_economics_status": "pre_rollover_not_fully_deployment_calibrated",
+    }
+
+
+def _frozen_g08_economics() -> G08CfdEconomics:
+    economics = load_g08_cfd_economics()
+    if economics.semantic_sha256 != G0_8_CFD_ECONOMICS_SHA256:
+        raise CarverTrendCarryFtmo5EvaluationError("frozen G0.8 economics SHA drifted")
+    return economics
+
+
+def _economics_symbol(execution_instrument: str) -> str:
+    try:
+        return _MAPPING[execution_instrument]
+    except KeyError as error:
+        raise CarverTrendCarryFtmo5EvaluationError(
+            f"unknown frozen execution instrument: {execution_instrument}"
+        ) from error
 
 
 def _root(value: str) -> tuple[str, Path]:
