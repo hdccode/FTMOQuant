@@ -12,15 +12,17 @@ import csv
 import hashlib
 import json
 import re
+import zipfile
 from collections import Counter, defaultdict
-from collections.abc import Sequence
+from collections.abc import Iterable, Sequence
 from dataclasses import dataclass
 from datetime import UTC, date, datetime
+from io import TextIOWrapper
 from pathlib import Path
 from typing import Any
 from zoneinfo import ZoneInfo
 
-IMPORTER_VERSION = "macro-events-ptit-1"
+IMPORTER_VERSION = "macro-events-ptit-2"
 DEFAULT_TIMEZONE = "America/New_York"
 NORMALIZATION_RULE_VERSION = "us-nfp-cpi-exact-labels-1"
 
@@ -30,7 +32,13 @@ _HEADER_ALIASES = {
     "time": ("time",),
     "currency": ("currency",),
     "impact": ("impact",),
-    "event_description": ("news description", "event", "event description", "title"),
+    "event_description": (
+        "description",
+        "news description",
+        "event",
+        "event description",
+        "title",
+    ),
     "actual": ("actual",),
     "forecast": ("forecast",),
     "previous": ("previous",),
@@ -38,9 +46,44 @@ _HEADER_ALIASES = {
     "event_id": ("ff event id", "event id", "id"),
     "group_id": ("group id", "event group id"),
     "actual_better_worse": ("actual better/worse", "actual bw", "actual color"),
-    "previous_better_worse": ("previous better/worse", "previous bw", "previous color"),
+    "previous_better_worse": (
+        "revised from better/worse",
+        "previous better/worse",
+        "previous bw",
+        "previous color",
+    ),
 }
 _NUMBER = re.compile(r"^([+-]?(?:\d+(?:\.\d*)?|\.\d+))(?:\s*)([%KMBT])?$", re.I)
+_HANOVER_POSITIONAL_SCHEMA = (
+    "Date",
+    "Time",
+    "Currency",
+    "Impact",
+    "Description",
+    "Actual",
+    "Forecast",
+    "Previous",
+    "Revised from",
+    "FF event ID",
+    "Group ID",
+    "Actual better/worse",
+    "Revised from better/worse",
+)
+_HANOVER_POSITIONAL_FIELDS = (
+    "date",
+    "time",
+    "currency",
+    "impact",
+    "event_description",
+    "actual",
+    "forecast",
+    "previous",
+    "revised_previous",
+    "event_id",
+    "group_id",
+    "actual_better_worse",
+    "previous_better_worse",
+)
 
 
 class MacroEventImportError(ValueError):
@@ -63,23 +106,43 @@ def import_historical_calendar(
     timezone_name: str = DEFAULT_TIMEZONE,
     access_date: str | None = None,
     secondary_input: Path | None = None,
+    source_reference: str | None = None,
+    stated_coverage: str | None = None,
+    stated_timestamp_semantics: str | None = None,
+    strict_hanover_utc_schema: bool = False,
 ) -> ImportResult:
     """Import local, immutable calendar files and persist deterministic artifacts."""
 
     if not inputs:
         raise MacroEventImportError("at least one input CSV is required")
     zone = _load_zone(timezone_name)
+    if strict_hanover_utc_schema:
+        if timezone_name != "UTC":
+            raise MacroEventImportError(
+                "strict Hanover UTC schema requires --timezone UTC"
+            )
+        if (
+            not source_reference
+            or not stated_coverage
+            or not stated_timestamp_semantics
+        ):
+            raise MacroEventImportError(
+                "strict Hanover UTC schema requires source reference, coverage, "
+                "and timestamp semantics"
+            )
+        if stated_timestamp_semantics != "UTC":
+            raise MacroEventImportError(
+                "strict Hanover UTC schema requires stated timestamp semantics UTC"
+            )
     accessed = access_date or date.today().isoformat()
     _parse_date(accessed, "access_date")
     raw_rows: list[dict[str, Any]] = []
-    source_files: list[dict[str, str]] = []
+    source_files: list[dict[str, Any]] = []
     for input_path in sorted((path.resolve() for path in inputs), key=str):
         if not input_path.is_file():
             raise MacroEventImportError(f"input is not a file: {input_path}")
-        source_files.append(
-            {"path": str(input_path), "sha256": _sha256_file(input_path)}
-        )
-        raw_rows.extend(_read_csv(input_path))
+        source_files.append(_source_file_provenance(input_path))
+        raw_rows.extend(_read_csv(input_path, strict_hanover_utc_schema))
 
     normalized: list[dict[str, Any]] = []
     quarantined: list[dict[str, Any]] = []
@@ -103,7 +166,7 @@ def import_historical_calendar(
     )
     retained, duplicate_quarantine = _quarantine_exact_duplicates(normalized)
     quarantined.extend(duplicate_quarantine)
-    qa = _qa_report(raw_rows, retained, quarantined, scope_excluded)
+    qa = _qa_report(raw_rows, retained, quarantined, scope_excluded, zone)
     cross_check = _cross_check(retained, secondary_input, zone, timezone_name)
     qa["secondary_cross_check"] = cross_check
 
@@ -120,8 +183,11 @@ def import_historical_calendar(
         "source": {
             "name": source_name,
             "url": source_url,
+            "reference": source_reference or source_url,
             "files": source_files,
             "access_date": accessed,
+            "stated_coverage": stated_coverage,
+            "stated_timestamp_semantics": stated_timestamp_semantics,
         },
         "timezone_semantics": {
             "source_timezone": timezone_name,
@@ -131,6 +197,16 @@ def import_historical_calendar(
             "utc_timestamp": (
                 "timezone-aware conversion; ambiguous or nonexistent local "
                 "timestamps are quarantined"
+            ),
+        },
+        "input_format": {
+            "header_mode": (
+                "headerless_positional_13"
+                if strict_hanover_utc_schema
+                else "named_header_csv"
+            ),
+            "positional_schema": (
+                list(_HANOVER_POSITIONAL_SCHEMA) if strict_hanover_utc_schema else None
             ),
         },
         "normalization": {
@@ -152,34 +228,138 @@ def import_historical_calendar(
     return ImportResult(len(retained), len(quarantined), destination)
 
 
-def _read_csv(path: Path) -> list[dict[str, Any]]:
+def _source_file_provenance(path: Path) -> dict[str, Any]:
+    provenance: dict[str, Any] = {
+        "path": str(path),
+        "filename": path.name,
+        "sha256": _sha256_file(path),
+    }
+    if path.suffix.casefold() == ".zip":
+        provenance["csv_member"] = _zip_csv_member(path)
+        provenance["csv_member_sha256"] = _zip_csv_member_sha256(
+            path, provenance["csv_member"]
+        )
+    return provenance
+
+
+def _read_csv(
+    path: Path, strict_hanover_utc_schema: bool = False
+) -> list[dict[str, Any]]:
     try:
+        if path.suffix.casefold() == ".zip":
+            member = _zip_csv_member(path)
+            with zipfile.ZipFile(path) as archive:
+                with archive.open(member) as compressed:
+                    with TextIOWrapper(
+                        compressed, encoding="utf-8-sig", newline=""
+                    ) as handle:
+                        return _read_csv_rows(
+                            handle, path, member, strict_hanover_utc_schema
+                        )
         with path.open("r", encoding="utf-8-sig", newline="") as handle:
-            reader = csv.DictReader(handle)
-            if not reader.fieldnames:
-                raise MacroEventImportError(f"CSV has no header: {path}")
-            mapping = _map_headers(reader.fieldnames, path)
-            rows = []
-            for row_number, source in enumerate(reader, start=2):
-                raw = {
-                    key: (value or "").strip()
-                    for key, value in source.items()
-                    if key is not None
-                }
-                fields = {
-                    field: raw.get(header, "") for field, header in mapping.items()
-                }
-                rows.append(
-                    {
-                        "source_file": str(path.resolve()),
-                        "source_row_number": row_number,
-                        "fields": fields,
-                        "raw_columns": raw,
-                    }
-                )
-            return rows
+            return _read_csv_rows(handle, path, None, strict_hanover_utc_schema)
     except UnicodeDecodeError as error:
         raise MacroEventImportError(f"CSV must be UTF-8: {path}") from error
+    except zipfile.BadZipFile as error:
+        raise MacroEventImportError(f"invalid ZIP archive: {path}") from error
+
+
+def _zip_csv_member(path: Path) -> str:
+    try:
+        with zipfile.ZipFile(path) as archive:
+            members = sorted(
+                item.filename
+                for item in archive.infolist()
+                if not item.is_dir() and item.filename.casefold().endswith(".csv")
+            )
+    except zipfile.BadZipFile as error:
+        raise MacroEventImportError(f"invalid ZIP archive: {path}") from error
+    if len(members) != 1:
+        raise MacroEventImportError(
+            f"ZIP must contain exactly one CSV member, found {len(members)}: {path}"
+        )
+    return members[0]
+
+
+def _zip_csv_member_sha256(path: Path, member: str) -> str:
+    digest = hashlib.sha256()
+    with zipfile.ZipFile(path) as archive:
+        with archive.open(member) as compressed:
+            for chunk in iter(lambda: compressed.read(1024 * 1024), b""):
+                digest.update(chunk)
+    return digest.hexdigest()
+
+
+def _read_csv_rows(
+    handle: TextIOWrapper,
+    path: Path,
+    member: str | None,
+    strict_hanover_utc_schema: bool,
+) -> list[dict[str, Any]]:
+    if strict_hanover_utc_schema:
+        return _read_hanover_positional_rows(handle, path, member)
+    reader = csv.DictReader(handle)
+    if not reader.fieldnames:
+        raise MacroEventImportError(f"CSV has no header: {path}")
+    mapping = _map_headers(reader.fieldnames, path)
+    source_label = (
+        str(path.resolve()) if member is None else f"{path.resolve()}::{member}"
+    )
+    rows = []
+    for row_number, source in enumerate(reader, start=2):
+        raw = {
+            key: value if value is not None else ""
+            for key, value in source.items()
+            if key is not None
+        }
+        fields = {field: raw.get(header, "") for field, header in mapping.items()}
+        rows.append(
+            {
+                "source_file": source_label,
+                "source_row_number": row_number,
+                "fields": fields,
+                "raw_columns": raw,
+            }
+        )
+    return rows
+
+
+def _read_hanover_positional_rows(
+    handle: TextIOWrapper, path: Path, member: str | None
+) -> list[dict[str, Any]]:
+    reader = csv.reader(handle)
+    source_label = (
+        str(path.resolve()) if member is None else f"{path.resolve()}::{member}"
+    )
+    rows = []
+    for row_number, values in enumerate(reader, start=1):
+        if len(values) != len(_HANOVER_POSITIONAL_SCHEMA):
+            raise MacroEventImportError(
+                "strict Hanover headerless CSV requires exactly 13 columns at "
+                f"row {row_number}: {path}"
+            )
+        if (
+            row_number == 1
+            and len(values) >= 2
+            and _canon_header(values[0]) == "date"
+            and _canon_header(values[1]) == "time"
+        ):
+            raise MacroEventImportError(
+                "strict Hanover UTC schema requires a headerless positional CSV"
+            )
+        raw = dict(zip(_HANOVER_POSITIONAL_SCHEMA, values, strict=True))
+        fields = dict(zip(_HANOVER_POSITIONAL_FIELDS, values, strict=True))
+        rows.append(
+            {
+                "source_file": source_label,
+                "source_row_number": row_number,
+                "fields": fields,
+                "raw_columns": raw,
+            }
+        )
+    if not rows:
+        raise MacroEventImportError(f"headerless Hanover CSV is empty: {path}")
+    return rows
 
 
 def _map_headers(headers: Sequence[str], path: Path) -> dict[str, str]:
@@ -370,52 +550,82 @@ def _qa_report(
     rows: list[dict[str, Any]],
     quarantined: list[dict[str, Any]],
     scope_excluded: int,
+    zone: ZoneInfo,
 ) -> dict[str, Any]:
     by_family = Counter(row["event_family"] for row in rows)
-    parsed = [row["forecast_parsed"] for row in rows]
-    actual = [row["actual_parsed"] for row in rows]
+    source_numeric = [
+        _parse_numeric(item["fields"].get(field, ""))
+        for item in raw
+        for field in ("actual", "forecast", "previous", "revised_previous")
+    ]
+    source_actual = [_parse_numeric(item["fields"].get("actual", "")) for item in raw]
+    source_forecast = [
+        _parse_numeric(item["fields"].get("forecast", "")) for item in raw
+    ]
     names = defaultdict(set)
     for row in rows:
         names[row["event_family"]].add(row["event_description_raw"])
-    midnight = [row for row in rows if row["timestamp_local"][11:16] == "00:00"]
     revisions = [row for row in rows if row["revised_previous_raw"]]
-    malformed = sum(
-        value["status"] == "malformed"
-        for row in rows
-        for value in (
-            row["actual_parsed"],
-            row["forecast_parsed"],
-            row["previous_parsed"],
-            row["revised_previous_parsed"],
-        )
-    )
-    dates = [row["timestamp_utc"][:10] for row in rows]
     reasons = Counter(item["reason"] for item in quarantined)
+    timestamp_qa = _source_timestamp_qa(raw, zone)
+    event_ids = [item["fields"].get("event_id", "") for item in raw]
+    event_id_duplicates = _duplicate_count(item for item in event_ids if item)
+    source_event_duplicates = _source_event_duplicate_count(raw, zone)
+    groups = defaultdict(set)
+    for item in raw:
+        group_id = item["fields"].get("group_id", "")
+        description = item["fields"].get("event_description", "")
+        if group_id and description:
+            groups[group_id].add(description)
+    group_description_changes = {
+        group_id: sorted(descriptions)
+        for group_id, descriptions in sorted(groups.items())
+        if len(descriptions) > 1
+    }
     return {
         "qa_version": IMPORTER_VERSION,
         "total_source_rows": len(raw),
         "in_scope_rows": len(rows) + sum(reasons.values()),
         "scope_excluded_rows": scope_excluded,
         "normalized_rows": len(rows),
-        "date_coverage_utc": {
-            "start": min(dates) if dates else None,
-            "end": max(dates) if dates else None,
+        "min_timestamp_utc": timestamp_qa["min_timestamp_utc"],
+        "max_timestamp_utc": timestamp_qa["max_timestamp_utc"],
+        "utc_parsing_failures": timestamp_qa["utc_parsing_failures"],
+        "source_timestamp_order_violations": timestamp_qa["order_violations"],
+        "usd_event_count": sum(
+            item["fields"].get("currency", "").upper() == "USD" for item in raw
+        ),
+        "nfp_family_count": by_family["US_NFP_HEADLINE_EMPLOYMENT_CHANGE"],
+        "cpi_family_counts": {
+            family: by_family[family]
+            for family in (
+                "US_CPI_HEADLINE_M_M",
+                "US_CPI_HEADLINE_Y_Y",
+                "US_CPI_CORE_M_M",
+                "US_CPI_CORE_Y_Y",
+            )
         },
         "counts_by_event_family": dict(sorted(by_family.items())),
         "missing_forecast_percent": _percent(
-            sum(value["status"] == "missing" for value in parsed), len(parsed)
+            sum(value["status"] == "missing" for value in source_forecast),
+            len(source_forecast),
         ),
         "missing_actual_percent": _percent(
-            sum(value["status"] == "missing" for value in actual), len(actual)
+            sum(value["status"] == "missing" for value in source_actual),
+            len(source_actual),
         ),
-        "malformed_numeric_field_count": malformed,
+        "malformed_numeric_field_count": sum(
+            value["status"] == "malformed" for value in source_numeric
+        ),
         "exact_duplicate_count": reasons["exact_duplicate"],
+        "duplicate_event_id_count": event_id_duplicates,
+        "duplicate_timestamp_currency_event_count": source_event_duplicates,
         "timestamp_anomalies": {
             reason: count
             for reason, count in sorted(reasons.items())
             if "timestamp" in reason or reason in {"malformed_date", "malformed_time"}
         }
-        | {"suspicious_midnight_count": len(midnight)},
+        | {"suspicious_midnight_count": timestamp_qa["midnight_count"]},
         "revision_prevalence_percent": _percent(len(revisions), len(rows)),
         "revision_count": len(revisions),
         "rejected_or_quarantined_rows": len(quarantined),
@@ -425,7 +635,77 @@ def _qa_report(
             for family, labels in sorted(names.items())
             if len(labels) > 1
         },
+        "group_id_description_change_count": len(group_description_changes),
+        "group_id_description_change_examples": dict(
+            list(group_description_changes.items())[:10]
+        ),
+        "candidate_readiness": {
+            family: {
+                "record_count": by_family[family],
+                "status": "REVIEW_REQUIRED" if by_family[family] else "NO_RECORDS",
+            }
+            for family in (
+                "US_NFP_HEADLINE_EMPLOYMENT_CHANGE",
+                "US_CPI_HEADLINE_M_M",
+                "US_CPI_HEADLINE_Y_Y",
+                "US_CPI_CORE_M_M",
+                "US_CPI_CORE_Y_Y",
+            )
+        },
     }
+
+
+def _source_timestamp_qa(raw: list[dict[str, Any]], zone: ZoneInfo) -> dict[str, Any]:
+    parsed: list[datetime] = []
+    failures: Counter[str] = Counter()
+    order_violations = 0
+    midnight_count = 0
+    prior: datetime | None = None
+    for item in raw:
+        timestamp, reason = _parse_timestamp(
+            item["fields"].get("date", ""), item["fields"].get("time", ""), zone
+        )
+        if reason is not None:
+            failures[reason] += 1
+            continue
+        if prior is not None and timestamp < prior:
+            order_violations += 1
+        prior = timestamp
+        parsed.append(timestamp)
+        if timestamp.hour == 0 and timestamp.minute == 0:
+            midnight_count += 1
+    return {
+        "min_timestamp_utc": _format_utc(min(parsed)) if parsed else None,
+        "max_timestamp_utc": _format_utc(max(parsed)) if parsed else None,
+        "utc_parsing_failures": dict(sorted(failures.items())),
+        "order_violations": order_violations,
+        "midnight_count": midnight_count,
+    }
+
+
+def _source_event_duplicate_count(raw: list[dict[str, Any]], zone: ZoneInfo) -> int:
+    keys = []
+    for item in raw:
+        timestamp, reason = _parse_timestamp(
+            item["fields"].get("date", ""), item["fields"].get("time", ""), zone
+        )
+        if reason is None:
+            keys.append(
+                (
+                    _format_utc(timestamp),
+                    item["fields"].get("currency", "").upper(),
+                    item["fields"].get("event_description", ""),
+                )
+            )
+    return _duplicate_count(keys)
+
+
+def _duplicate_count(values: Iterable[Any]) -> int:
+    return sum(count - 1 for count in Counter(values).values() if count > 1)
+
+
+def _format_utc(timestamp: datetime) -> str:
+    return timestamp.astimezone(UTC).isoformat().replace("+00:00", "Z")
 
 
 def _cross_check(
@@ -537,6 +817,10 @@ def main(argv: list[str] | None = None) -> None:
     parser.add_argument("--timezone", default=DEFAULT_TIMEZONE)
     parser.add_argument("--access-date")
     parser.add_argument("--secondary-input", type=Path)
+    parser.add_argument("--source-reference")
+    parser.add_argument("--stated-coverage")
+    parser.add_argument("--stated-timestamp-semantics")
+    parser.add_argument("--strict-hanover-utc-schema", action="store_true")
     args = parser.parse_args(argv)
     result = import_historical_calendar(
         args.input,
@@ -546,6 +830,10 @@ def main(argv: list[str] | None = None) -> None:
         timezone_name=args.timezone,
         access_date=args.access_date,
         secondary_input=args.secondary_input,
+        source_reference=args.source_reference,
+        stated_coverage=args.stated_coverage,
+        stated_timestamp_semantics=args.stated_timestamp_semantics,
+        strict_hanover_utc_schema=args.strict_hanover_utc_schema,
     )
     print(
         json.dumps(
