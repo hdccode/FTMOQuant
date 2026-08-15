@@ -126,8 +126,10 @@ def load_development_macro_events(path: Path) -> tuple[MacroEvent, ...]:
                 )
             family = raw.get("event_family")
             timestamp = _timestamp(raw.get("timestamp_utc"))
-            if family not in _FAMILIES or not (
-                DEVELOPMENT_START <= timestamp < DEVELOPMENT_END_EXCLUSIVE
+            if (
+                family not in _FAMILIES
+                or not (DEVELOPMENT_START <= timestamp < DEVELOPMENT_END_EXCLUSIVE)
+                or not _in_comparison_fold(timestamp)
             ):
                 continue
             actual = _parsed_number(raw.get("actual_parsed"), "actual")
@@ -324,6 +326,14 @@ def _fold_for(timestamp: datetime) -> DevelopmentFold:
             "event timestamp is not in exactly one DEVELOPMENT fold"
         )
     return matches[0]
+
+
+def _in_comparison_fold(timestamp: datetime) -> bool:
+    """Exclude DEVELOPMENT warmup; only comparison windows emit observations."""
+    return any(
+        fold.compare_start_utc <= timestamp < fold.compare_end_exclusive_utc
+        for fold in frozen_development_folds().folds
+    )
 
 
 def _verify_macro_provenance(path: Path) -> str:

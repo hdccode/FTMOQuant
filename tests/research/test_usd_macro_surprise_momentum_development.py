@@ -7,9 +7,13 @@ from ftmoquant.research.stage_g import InstrumentBarObservation, SynchronizedClo
 from ftmoquant.research.usd_macro_surprise_momentum_development import (
     EventResult,
     MacroEvent,
+    _fold_for,
     _summary,
     evaluate_macro_events,
     load_development_macro_events,
+)
+from ftmoquant.research.usd_macro_surprise_momentum_spec import (
+    USD_MACRO_SURPRISE_MOMENTUM_CONFIG_SHA256,
 )
 
 
@@ -74,21 +78,33 @@ def test_both_pairs_required_missing_and_overlap_are_deterministic() -> None:
     assert overlap[1].reason == "overlap_same_instrument"
 
 
-def test_event_loader_excludes_outside_development_and_keeps_non_strict_boundary(
+def test_event_loader_excludes_warmup_and_retains_each_comparison_fold(
     tmp_path: Path,
 ) -> None:
     path = tmp_path / "events.jsonl"
     rows = [
         _raw("2019-03-11T00:00:00Z"),
         _raw("2023-04-11T00:00:00Z"),
-        _raw("2020-05-01T10:00:00Z", family="US_CPI_HEADLINE_M_M"),
+        _raw("2020-05-01T10:00:00Z"),
+        _raw("2021-05-01T10:00:00Z", family="US_CPI_HEADLINE_M_M"),
+        _raw("2022-05-01T10:00:00Z"),
     ]
     path.write_text("".join(json.dumps(row) + "\n" for row in rows), encoding="utf-8")
     events = load_development_macro_events(path)
     assert [item.event_family for item in events] == [
         "US_NFP_HEADLINE_EMPLOYMENT_CHANGE",
         "US_CPI_HEADLINE_M_M",
+        "US_NFP_HEADLINE_EMPLOYMENT_CHANGE",
     ]
+    assert [item.timestamp_utc.year for item in events] == [2020, 2021, 2022]
+    assert [_fold_for(item.timestamp_utc).fold_id for item in events] == [
+        "dev_fold_1",
+        "dev_fold_2",
+        "dev_fold_3",
+    ]
+    assert USD_MACRO_SURPRISE_MOMENTUM_CONFIG_SHA256 == (
+        "ce997472bfd600d3411dd7c30a9d2df04bce353c1481a3d3eab0d5efb6d9df66"
+    )
 
 
 def test_event_level_summary_gate_and_bootstrap_are_deterministic() -> None:
