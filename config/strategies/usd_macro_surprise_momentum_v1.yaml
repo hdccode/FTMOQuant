@@ -1,0 +1,94 @@
+schema_version: 1
+candidate_id: usd_macro_surprise_momentum_v1
+version: 1.0.0
+status: preregistered_not_evaluated
+
+event_source:
+  name: Hanover / Forex Factory UTC archive
+  zip_sha256: 3fb4421df0ea63cac570b7adcd16892ec50909ad7d3c441d462443245a5d84ce
+  timestamp_semantics: UTC release timestamp
+  permitted_event_families:
+    - US_NFP_HEADLINE_EMPLOYMENT_CHANGE
+    - US_CPI_HEADLINE_M_M
+  excluded_event_families:
+    - US_CPI_HEADLINE_Y_Y
+    - US_CPI_CORE_M_M
+    - US_CPI_CORE_Y_Y
+    - central_bank_rate_decisions
+
+research_boundary:
+  development_start_utc: "2019-03-11T00:00:00Z"
+  development_end_exclusive_utc: "2023-04-11T00:00:00Z"
+  development_folds_version: g1.4b-development-folds-1
+  development_folds_sha256: 805687e8657c1482d5f8cff4b513385eebfc6a62795735fd4b390019b2e1fdfe
+  validation: locked
+  final_holdout: locked
+  fx_returns_accessed: false
+
+universe:
+  ordered_instruments: [EUR/USD.DUKASCOPY, GBP/USD.DUKASCOPY]
+  inference_unit: one_macro_release_timestamp
+  instrument_dependence: equal_weight_event_portfolio_not_independent_observations
+
+signal:
+  formula: actual_minus_forecast
+  positive_surprise: USD_positive
+  negative_surprise: USD_negative
+  zero_surprise: no_trade
+  surprise_threshold: none
+  surprise_standardization: none
+  parameter_optimization: forbidden
+
+direction:
+  USD_positive:
+    EUR/USD.DUKASCOPY: short
+    GBP/USD.DUKASCOPY: short
+  USD_negative:
+    EUR/USD.DUKASCOPY: long
+    GBP/USD.DUKASCOPY: long
+
+timing:
+  event_timestamp: frozen_utc_release_timestamp
+  immediate_reaction_exclusion_minutes: 5
+  entry: first_eligible_executable_market_observation_strictly_at_or_after_t_plus_5m
+  exit: first_eligible_executable_market_observation_at_or_after_t_plus_60m
+  stop_loss: none
+  take_profit: none
+  trailing_logic: none
+  discretionary_filters: forbidden
+  overlapping_position_same_instrument: forbidden
+
+execution:
+  framework: deterministic_G0_7_bid_ask_execution_and_cost_framework
+  news_fill_model: none
+  cost_scenarios: [base, 1.5x]
+
+evaluation:
+  folds: existing_deterministic_development_folds_by_event_timestamp
+  event_portfolio: equal_weight_EURUSD_and_GBPUSD_before_statistics
+  report:
+    - event_count_by_type_and_fold
+    - mean_net_event_return
+    - median_net_event_return
+    - hit_rate
+    - fold_results
+    - pooled_result
+    - base_cost_result
+    - cost_stress_1_5x_result
+    - event_level_bootstrap_confidence_interval
+    - worst_fold
+    - sequential_event_portfolio_maximum_drawdown
+    - provenance_hashes
+  bootstrap:
+    level: event
+    required_to_report: true
+    mandatory_for_pass: false
+  promotion_rule:
+    pooled_mean_net_event_return_gt: 0
+    positive_mean_folds_at_least: 2
+    fold_count: 3
+    median_fold_result_gt: 0
+    pooled_mean_under_1_5x_cost_gt: 0
+    implementation_or_data_integrity_failure: fail
+  failure_rule: reject_retire_without_changes_to_v1
+  future_mean_reversion: separate_candidate_required
