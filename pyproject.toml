@@ -39,6 +39,7 @@ ftmoquant-evaluate-session-range-expansion-development = "ftmoquant.research.ses
 ftmoquant-evaluate-liquidity-shock-reversion-development = "ftmoquant.research.liquidity_shock_reversion_development:main"
 ftmoquant-evaluate-leo-gbpusd-development = "ftmoquant.research.leo_gbpusd_development:main"
 ftmoquant-prepare-leo-gbpusd-development-cache = "ftmoquant.research.leo_gbpusd_development:prepare_cache_main"
+ftmoquant-evaluate-usd-macro-surprise-momentum-development = "ftmoquant.research.usd_macro_surprise_momentum_development:main"
 
 [dependency-groups]
 dev = [
