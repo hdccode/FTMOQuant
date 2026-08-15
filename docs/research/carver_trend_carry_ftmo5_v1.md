@@ -14,3 +14,11 @@ only. The CFD/futures basis mismatch must be reported and may not be assumed
 favourable. A later evaluator must use the frozen G0.7 cost framework at base
 and 1.5× costs, existing FTMO constraints where compatible, and must retire the
 candidate after a failing DEVELOPMENT gate without tuning.
+
+## Pre-evaluation source-ID correction
+
+Before any DEVELOPMENT returns were accessed, the SOYBEAN Dukascopy numeric
+execution-price proxy was corrected from `SOYBEAN.CMD/USD.DUKASCOPY` to the
+official source identifier `SOYBEAN.CMD/USX.DUKASCOPY`. G0.8 FTMO P&L remains
+anchored to `SOYBEAN.c`; this correction does not introduce a USX-to-USD
+conversion or alter any strategy rule.

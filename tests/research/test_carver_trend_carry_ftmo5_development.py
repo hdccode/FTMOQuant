@@ -77,7 +77,7 @@ def test_strict_later_fold_warmup_and_cost_stress() -> None:
     assert stressed_cost(0.01) == (0.01, 0.015)
     assert (
         CARVER_TREND_CARRY_FTMO5_CONFIG_SHA256
-        == "f2a1eacf7d3adb18938bc7013d9873906b2fc6d5e7f3bf6a68cfd3754e9daa40"
+        == "42578883ae9a6dbe41c9bc4ab98495e0935a200d2bc0282ab28ae05e45c0608b"
     )
 
 
@@ -88,7 +88,7 @@ def test_all_five_g08_mappings_pnl_commission_margin_and_sessions() -> None:
         "XAU/USD.DUKASCOPY": "XAU/USD",
         "USA500.DUKASCOPY": "US500.cash",
         "LIGHT.CMD/USD.DUKASCOPY": "USOIL.cash",
-        "SOYBEAN.CMD/USD.DUKASCOPY": "SOYBEAN.c",
+        "SOYBEAN.CMD/USX.DUKASCOPY": "SOYBEAN.c",
     }
     assert set(mappings) == set(carver._MAPPING)
     assert cfd_net_pnl(
@@ -115,7 +115,7 @@ def test_all_five_g08_mappings_pnl_commission_margin_and_sessions() -> None:
     ) == Decimal("100")
     assert cfd_net_pnl(
         economics,
-        "SOYBEAN.CMD/USD.DUKASCOPY",
+        "SOYBEAN.CMD/USX.DUKASCOPY",
         1,
         Decimal("1200"),
         Decimal("1210"),
@@ -128,7 +128,7 @@ def test_all_five_g08_mappings_pnl_commission_margin_and_sessions() -> None:
     assert first_eligible_cfd_execution(
         signal,
         (signal, datetime(2026, 7, 6, 14, 40, tzinfo=UTC)),
-        "SOYBEAN.CMD/USD.DUKASCOPY",
+        "SOYBEAN.CMD/USX.DUKASCOPY",
         economics,
     ) == datetime(2026, 7, 6, 14, 40, tzinfo=UTC)
 

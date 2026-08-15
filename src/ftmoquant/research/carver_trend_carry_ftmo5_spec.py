@@ -21,7 +21,7 @@ CARVER_TREND_CARRY_FTMO5_SPEC_PATH = Path(
     "config/strategies/carver_trend_carry_ftmo5_v1.yaml"
 )
 CARVER_TREND_CARRY_FTMO5_CONFIG_SHA256 = (
-    "f2a1eacf7d3adb18938bc7013d9873906b2fc6d5e7f3bf6a68cfd3754e9daa40"
+    "42578883ae9a6dbe41c9bc4ab98495e0935a200d2bc0282ab28ae05e45c0608b"
 )
 
 
@@ -114,7 +114,7 @@ def _validate(document: dict[str, Any]) -> None:
         "GOLD": "XAU/USD.DUKASCOPY",
         "SP500": "USA500.DUKASCOPY",
         "CRUDE_W": "LIGHT.CMD/USD.DUKASCOPY",
-        "SOYBEAN": "SOYBEAN.CMD/USD.DUKASCOPY",
+        "SOYBEAN": "SOYBEAN.CMD/USX.DUKASCOPY",
     }:
         raise CarverTrendCarryFtmo5SpecValidationError("futures/CFD mapping drifted")
     trend = _mapping(document["trend"], "trend")

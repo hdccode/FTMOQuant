@@ -24,7 +24,7 @@ universe:
     GOLD: XAU/USD.DUKASCOPY
     SP500: USA500.DUKASCOPY
     CRUDE_W: LIGHT.CMD/USD.DUKASCOPY
-    SOYBEAN: SOYBEAN.CMD/USD.DUKASCOPY
+    SOYBEAN: SOYBEAN.CMD/USX.DUKASCOPY
   futures_role: signal_data_only
   execution_role: Dukascopy_CFD_execution_and_PnL_only
   basis_mismatch: explicit_report_required_no_favorable_basis_assumption
