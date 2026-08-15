@@ -40,6 +40,7 @@ ftmoquant-evaluate-liquidity-shock-reversion-development = "ftmoquant.research.l
 ftmoquant-evaluate-leo-gbpusd-development = "ftmoquant.research.leo_gbpusd_development:main"
 ftmoquant-prepare-leo-gbpusd-development-cache = "ftmoquant.research.leo_gbpusd_development:prepare_cache_main"
 ftmoquant-evaluate-usd-macro-surprise-momentum-development = "ftmoquant.research.usd_macro_surprise_momentum_development:main"
+ftmoquant-preflight-carver-trend-carry-ftmo5-development = "ftmoquant.research.carver_trend_carry_ftmo5_development:main"
 
 [dependency-groups]
 dev = [
