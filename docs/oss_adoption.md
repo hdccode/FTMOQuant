@@ -902,3 +902,23 @@ the model label is supplied by the input series/DataFrame. The shared evaluator
 now derives that label from the frozen candidate ID, preserving all numerical
 inputs, bootstrap/SPA settings, and execution behavior. No dependency, source
 code, or statistics implementation was added.
+
+## Carver FTMO5 final DEVELOPMENT evaluator audit
+
+This audit was completed before any Carver strategy return was accessed. The
+exact pinned source commit was checked out solely to inspect configuration and
+system semantics. No validation or final-holdout path was opened.
+
+| Repository | Version / commit | License | Role and adoption | Modifications and validation |
+| --- | --- | --- | --- | --- |
+| [robcarver17/pysystemtrade](https://github.com/robcarver17/pysystemtrade/tree/b4a25e6e1e33a54a3ecfb45c0f6db5e2b60b84f8) | `b4a25e6e1e33a54a3ecfb45c0f6db5e2b60b84f8` | GPL-3.0 | Reference-only audit of `systems/provided/rob_system/config.yaml`, `systems/positionsizing.py`, `systems/portfolio.py`, `systems/forecast_combine.py`, `systems/rawdata.py`, `systems/provided/rules/ewmac.py`, `systems/provided/rules/carry.py`, `sysquant/estimators/vol.py`, `sysobjects/carry_data.py`, and the P&L calculators. Adopted the documented 500,000 USD notional capital, 25% target, 256-day cash-vol scaling, forecast/10 sizing structure, instrument-weight-before-IDM order, price-unit volatility, contract-date roll annualisation, delayed position accounting concept, and daily mark-to-market aggregation. | No upstream source text or package was copied or vendored. FTMOQuant implements a typed, independently written adapter for the already-preregistered rule structure. The upstream whole-contract rounding, large-universe weights/IDM, futures costs, and broker economics were not adopted because frozen G0.8 continuous CFD targets and five-market FTMO economics govern those boundaries. |
+| Existing FTMOQuant G0.7/G0.8 and Stage G | Repository HEAD before evaluation | Project-native | Reused observed BID/ASK side selection, strict-later executable observations, liquidation-side valuation, fixed-capital daily return reporting, 1.5× realised-cost stress, deterministic folds/artifacts, and G0.8 contract, margin, commission, session, soybean-scale, and rollover-warning semantics. | No parallel broker-economics package or favourable basis/fill model was added. Synthetic tests cover every mapped contract shape and the sealed-data boundary. |
+| [bashtage/arch](https://github.com/bashtage/arch/tree/v8.0.0) | Existing exact pin `arch==8.0.0` | NCSA | Reused through `ftmoquant.research.statistics` for the two-sided 95% basic stationary-bootstrap mean interval with block 20, 10,000 repetitions, and seed 14042026. | No bootstrap implementation or data-driven block selection was added. |
+
+The pinned `rob_system` IDM of 2.75 was rejected as inapplicable because it is
+estimated for a structurally different, much larger universe. The neutral
+five-market IDM of 1.0, next-UTC-midnight signal completion, aggregate G0.8
+margin fail-closed rule, and separation of deterministic result content from
+wall-clock run metadata are explicitly new performance-blind preregistered
+conventions. No backtester, parameter optimizer, financing model, or data
+dependency was added.

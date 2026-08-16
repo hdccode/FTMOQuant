@@ -1,6 +1,6 @@
 schema_version: 1
 candidate_id: carver_trend_carry_ftmo5_v1
-version: 1.0.0
+version: 1.1.0
 status: preregistered_not_evaluated
 
 provenance:
@@ -82,6 +82,108 @@ portfolio:
 execution_and_costs:
   framework: existing_FTMOQuant_portfolio_exposure_constraints_and_G0_7_execution_costs_where_possible
   cost_scenarios: [base, 1.5x]
+
+development_evaluator:
+  input_contract:
+    eur_development_root: .artifacts/g1_4b/development/EURUSD
+    eur_split_manifest_sha256: 9f1be851eba4cdc49e44a4c64ce1b318e6ab7ad12d25d9e406cb4683affd6ff2
+    eur_catalog_tree_sha256: 59b7879b2274f6bf7f3085ba0102182b2fce642b8d92a365bca250c56b8c5aaa
+    oanda_cache_root: /Users/Shared/FTMOQuant-data/carver_ftmo5_v1/oanda_development_m1_2019_03_11_2023_04_11_v1
+    oanda_acquisition_carver_semantic_sha256: 489b53abff19e041afda9cc5ba210a67252bf89dea87c8b9994f08c4422e210d
+    oanda_manifest_sha256: 03b21857a45d5362e67c1042060804739a4a358645bb0f3e346bdfaf83edba95
+    oanda_processed_sha256:
+      XAU_USD: 176959234c0d303b13d59094f76bc9f106dd46572dedfdbdce6fd86538e7ed3e
+      SPX500_USD: 94a66faa09fb0c7e174861c0a24205640cf377ed6693b404bc6d7accea8397a6
+      WTICO_USD: a20402717daebc54ec45c690d80a216912b3c613a5e3db2b5cee2dc2ce5af7f4
+      SOYBN_USD: eaf6946f0fca2e9103d8d30f1ae5beaeabfc9c5847d216779f64a0d0d6b5da8f
+    oanda_qa_sha256:
+      XAU_USD: 898c12b6681e2e319de6258e513c9a4efcc69e143bbd8ebb907aee7e7fc2f61f
+      SPX500_USD: 03b0edff63a2ac84d532bc6388849dcc72fc54de1d59f6e97c93d96f50d88f42
+      WTICO_USD: d966dbd2c5a12892138503d4676a1867444e91fdb1912fe7677a5c5b5dd97fef
+      SOYBN_USD: 34b8d6d3e2228c4d0f06e2d6b32e2f64ec36734d55dbd91aea1da2788ed5d493
+  account:
+    currency: USD
+    research_capital: 500000
+    annual_percentage_volatility_target: 25
+    capital_mode: fixed_notional_no_compounding
+  sizing:
+    business_days_per_year: 256
+    average_absolute_forecast: 10
+    instrument_weights: {EUR: 0.20, GOLD: 0.20, SP500: 0.20, CRUDE_W: 0.20, SOYBEAN: 0.20}
+    instrument_diversification_multiplier: 1.0
+    position_volatility_source: causal_daily_execution_proxy_midpoint_price_difference
+    equation: lots=(capital*annual_vol_target/sqrt(256))/(daily_proxy_price_vol*G0_8_contract_size)*(combined_forecast/10)*instrument_weight*IDM
+    lot_rounding: none_continuous_G0_8_research_targets
+  signal_clock:
+    daily_reference_aggregation: adjusted_price_last_and_annualised_roll_mean_by_UTC_date
+    completed_at: next_UTC_midnight_after_reference_date
+    multiple_rows_per_day: aggregate_before_next_midnight_no_intraday_rebalance
+    rebalance: once_per_instrument_per_completed_daily_signal
+  execution:
+    candle_component: close
+    buy_field: ask_close
+    sell_field: bid_close
+    observation_available_at: candle_start_plus_one_minute
+    selection: first_genuine_session_eligible_observation_strictly_later_than_signal_completion
+    sparse_provider_observations: consume_returned_sequence_only_no_fill_or_interpolation
+    evaluation_view: retain_each_UTC_dates_first_session_eligible_and_last_genuine_observation_only
+    transition: market_delta_from_current_continuous_lots_to_desired_continuous_lots
+    soybean_scale_boundary: multiply_raw_bid_ask_by_100_immediately_before_G0_8_economics
+  constraints:
+    ordering: compute_unconstrained_target_then_validate_session_then_validate_aggregate_swing_margin_then_execute
+    aggregate_swing_margin_limit: research_capital
+    breach_action: fail_closed_no_clipping_or_rescaling
+    challenge_loss_limits: not_applied_G1_core_edge
+  accounting:
+    base_spread: observed_bid_ask_half_spread_embedded_in_each_delta_fill
+    commission: G0_8_each_executed_side_on_absolute_delta_lots
+    rollover: UNMODELLED_results_explicitly_pre_rollover
+    mark_to_market: last_genuine_observed_bid_ask_close_available_before_each_UTC_midnight
+    open_position_valuation: liquidation_side_bid_for_long_ask_for_short
+    daily_return: change_in_total_liquidation_equity_divided_by_fixed_research_capital
+    realised_and_unrealised: both_included_in_total_liquidation_equity
+    fold_start: independent_cash_account_trades_warmup_then_scores_comparison_window_only
+    fold_end: virtual_liquidation_at_last_genuine_observation_before_end_including_exit_commission
+    cost_stress_1_5x: base_net_return_minus_0_5_times_realised_spread_plus_commission_cost_return
+  statistics:
+    sharpe_annualisation_days: 252
+    drawdown: compounded_sequential_daily_net_returns
+    turnover: sum_absolute_traded_G0_8_notional_divided_by_fixed_research_capital
+    bootstrap:
+      implementation: ftmoquant.research.statistics.stationary_bootstrap_confidence_interval
+      confidence_level: 0.95
+      method: basic
+      block_size: 20
+      repetitions: 10000
+      seed: 14042026
+    per_instrument_contribution: cumulative_instrument_net_pnl_divided_by_fixed_research_capital_and_share_of_pooled_net_pnl
+    trend_carry_decomposition: not_reported_not_gate_required_combined_forecast_executes_as_one_position
+  artifacts:
+    result_schema: ftmoquant.carver-trend-carry-ftmo5-development-results-v1
+    deterministic_files: [daily_returns.csv, trades.csv, result.json]
+    runtime_provenance_file: run_provenance.json
+    result_hash_excludes_runtime_timestamp: true
+  decision_provenance:
+    pinned_pysystemtrade:
+      - systems/provided/rob_system/config.yaml:percentage_vol_target=25,notional_trading_capital=500000
+      - systems/positionsizing.py:forecast_divided_by_average_absolute_forecast_and_daily_cash_vol_target
+      - systems/portfolio.py:instrument_weight_then_IDM
+      - sysquant/estimators/vol.py:mixed_vol_calc_days_35_min_periods_10_slow_20y_weight_0.35_backfill_disabled_to_preserve_causality
+      - syscore/dateutils.py:business_days_per_year=256
+    existing_FTMOQuant:
+      - G0_8:continuous_lots_contract_size_margin_commission_sessions_soybean_scale_and_rollover_warning
+      - G0_7_Stage_G:observed_bid_ask_strictly_later_execution_and_liquidation_side_marks
+      - ts_momentum_development:fixed_capital_daily_returns_1.5x_realised_cost_stress_sharpe_drawdown_turnover
+      - research.statistics:stationary_bootstrap_basic_95_block20_reps10000_seed14042026
+    new_neutral_performance_blind:
+      - five_market_IDM=1.0_because_no_five_market_multiplier_was_preregistered
+      - next_UTC_midnight_signal_completion_avoids_intraday_final_row_hindsight
+      - position_volatility_uses_causal_execution_proxy_daily_price_units_to_match_G0_8_contract_PnL
+      - aggregate_G0_8_swing_margin_must_not_exceed_fixed_capital_and_breaches_fail_closed
+      - daily_mark_is_last_genuine_quote_before_UTC_midnight_and_fold_end_is_virtual_liquidation
+      - evaluation_view_keeps_only_daily_first_eligible_and_last_genuine_observations_without_filling
+      - trend_carry_attribution_not_reported_because_combined_position_has_no_unambiguous_cost_split
+      - deterministic_result_separated_from_wall_clock_run_provenance
 
 research_boundary:
   development_start_utc: "2019-03-11T00:00:00Z"

@@ -6,6 +6,7 @@ import hashlib
 import json
 from dataclasses import dataclass
 from datetime import datetime
+from decimal import Decimal
 from pathlib import Path
 from typing import Any
 
@@ -21,7 +22,7 @@ CARVER_TREND_CARRY_FTMO5_SPEC_PATH = Path(
     "config/strategies/carver_trend_carry_ftmo5_v1.yaml"
 )
 CARVER_TREND_CARRY_FTMO5_CONFIG_SHA256 = (
-    "489b53abff19e041afda9cc5ba210a67252bf89dea87c8b9994f08c4422e210d"
+    "f1831cf1cdedeedfc21610054da8e542796c8b3c0cbc26a62074bdbf1ab39365"
 )
 
 
@@ -35,6 +36,24 @@ class CarverTrendCarryFtmo5Spec:
     version: str
     semantic_sha256: str
     canonical_document: dict[str, Any]
+    evaluator: CarverDevelopmentEvaluatorSpec
+
+
+@dataclass(frozen=True, slots=True)
+class CarverDevelopmentEvaluatorSpec:
+    research_capital: Decimal
+    annual_volatility_target: Decimal
+    business_days_per_year: int
+    average_absolute_forecast: Decimal
+    instrument_weights: tuple[tuple[str, Decimal], ...]
+    instrument_diversification_multiplier: Decimal
+    bootstrap_confidence_level: float
+    bootstrap_method: str
+    bootstrap_block_size: int
+    bootstrap_repetitions: int
+    bootstrap_seed: int
+    sharpe_annualisation_days: int
+    result_schema: str
 
 
 def load_carver_trend_carry_ftmo5_spec(
@@ -54,6 +73,7 @@ def load_carver_trend_carry_ftmo5_spec(
         version=value["version"],
         semantic_sha256=carver_trend_carry_ftmo5_config_sha256(value),
         canonical_document=value,
+        evaluator=_evaluator_spec(value),
     )
 
 
@@ -84,6 +104,7 @@ def _validate(document: dict[str, Any]) -> None:
         "execution_and_costs",
         "research_boundary",
         "development_gate",
+        "development_evaluator",
     }
     if set(document) != required:
         raise CarverTrendCarryFtmo5SpecValidationError("spec keys are not exact")
@@ -92,7 +113,7 @@ def _validate(document: dict[str, Any]) -> None:
         document["candidate_id"],
         document["version"],
         document["status"],
-    ) != (1, "carver_trend_carry_ftmo5_v1", "1.0.0", "preregistered_not_evaluated"):
+    ) != (1, "carver_trend_carry_ftmo5_v1", "1.1.0", "preregistered_not_evaluated"):
         raise CarverTrendCarryFtmo5SpecValidationError("candidate identity drifted")
     provenance = _mapping(document["provenance"], "provenance")
     if (
@@ -165,6 +186,7 @@ def _validate(document: dict[str, Any]) -> None:
         "parameter_optimization": "forbidden",
     }:
         raise CarverTrendCarryFtmo5SpecValidationError("forecast combination drifted")
+    _validate_development_evaluator(document)
     boundary = _mapping(document["research_boundary"], "research_boundary")
     folds = frozen_development_folds()
     if boundary != {
@@ -187,6 +209,134 @@ def _validate(document: dict[str, Any]) -> None:
         or gate.get("failure_rule") != "reject_retire_without_tuning"
     ):
         raise CarverTrendCarryFtmo5SpecValidationError("development gate drifted")
+
+
+def _evaluator_spec(document: dict[str, Any]) -> CarverDevelopmentEvaluatorSpec:
+    evaluator = _mapping(document["development_evaluator"], "development_evaluator")
+    account = _mapping(evaluator["account"], "development_evaluator.account")
+    sizing = _mapping(evaluator["sizing"], "development_evaluator.sizing")
+    statistics = _mapping(evaluator["statistics"], "development_evaluator.statistics")
+    bootstrap = _mapping(
+        statistics["bootstrap"], "development_evaluator.statistics.bootstrap"
+    )
+    artifacts = _mapping(evaluator["artifacts"], "development_evaluator.artifacts")
+    weights = _mapping(
+        sizing["instrument_weights"], "development_evaluator.sizing.instrument_weights"
+    )
+    return CarverDevelopmentEvaluatorSpec(
+        research_capital=Decimal(str(account["research_capital"])),
+        annual_volatility_target=Decimal(
+            str(account["annual_percentage_volatility_target"])
+        )
+        / Decimal(100),
+        business_days_per_year=int(sizing["business_days_per_year"]),
+        average_absolute_forecast=Decimal(str(sizing["average_absolute_forecast"])),
+        instrument_weights=tuple(
+            (instrument, Decimal(str(weight))) for instrument, weight in weights.items()
+        ),
+        instrument_diversification_multiplier=Decimal(
+            str(sizing["instrument_diversification_multiplier"])
+        ),
+        bootstrap_confidence_level=float(bootstrap["confidence_level"]),
+        bootstrap_method=str(bootstrap["method"]),
+        bootstrap_block_size=int(bootstrap["block_size"]),
+        bootstrap_repetitions=int(bootstrap["repetitions"]),
+        bootstrap_seed=int(bootstrap["seed"]),
+        sharpe_annualisation_days=int(statistics["sharpe_annualisation_days"]),
+        result_schema=str(artifacts["result_schema"]),
+    )
+
+
+def _validate_development_evaluator(document: dict[str, Any]) -> None:
+    evaluator = _mapping(document["development_evaluator"], "development_evaluator")
+    if set(evaluator) != {
+        "input_contract",
+        "account",
+        "sizing",
+        "signal_clock",
+        "execution",
+        "constraints",
+        "accounting",
+        "statistics",
+        "artifacts",
+        "decision_provenance",
+    }:
+        raise CarverTrendCarryFtmo5SpecValidationError(
+            "development evaluator keys are not exact"
+        )
+    parsed = _evaluator_spec(document)
+    if (
+        parsed.research_capital != Decimal("500000")
+        or parsed.annual_volatility_target != Decimal("0.25")
+        or parsed.business_days_per_year != 256
+        or parsed.average_absolute_forecast != Decimal("10")
+        or parsed.instrument_weights
+        != tuple(
+            (item, Decimal("0.2"))
+            for item in ("EUR", "GOLD", "SP500", "CRUDE_W", "SOYBEAN")
+        )
+        or parsed.instrument_diversification_multiplier != Decimal("1.0")
+        or parsed.bootstrap_confidence_level != 0.95
+        or parsed.bootstrap_method != "basic"
+        or parsed.bootstrap_block_size != 20
+        or parsed.bootstrap_repetitions != 10_000
+        or parsed.bootstrap_seed != 14_042_026
+        or parsed.sharpe_annualisation_days != 252
+        or parsed.result_schema
+        != "ftmoquant.carver-trend-carry-ftmo5-development-results-v1"
+    ):
+        raise CarverTrendCarryFtmo5SpecValidationError(
+            "development evaluator numeric semantics drifted"
+        )
+    exact = {
+        "signal_clock": {
+            "daily_reference_aggregation": (
+                "adjusted_price_last_and_annualised_roll_mean_by_UTC_date"
+            ),
+            "completed_at": "next_UTC_midnight_after_reference_date",
+            "multiple_rows_per_day": (
+                "aggregate_before_next_midnight_no_intraday_rebalance"
+            ),
+            "rebalance": "once_per_instrument_per_completed_daily_signal",
+        },
+        "execution": {
+            "candle_component": "close",
+            "buy_field": "ask_close",
+            "sell_field": "bid_close",
+            "observation_available_at": "candle_start_plus_one_minute",
+            "selection": (
+                "first_genuine_session_eligible_observation_strictly_later_than_"
+                "signal_completion"
+            ),
+            "sparse_provider_observations": (
+                "consume_returned_sequence_only_no_fill_or_interpolation"
+            ),
+            "evaluation_view": (
+                "retain_each_UTC_dates_first_session_eligible_and_last_genuine_"
+                "observation_only"
+            ),
+            "transition": (
+                "market_delta_from_current_continuous_lots_to_desired_continuous_lots"
+            ),
+            "soybean_scale_boundary": (
+                "multiply_raw_bid_ask_by_100_immediately_before_G0_8_economics"
+            ),
+        },
+        "constraints": {
+            "ordering": (
+                "compute_unconstrained_target_then_validate_session_then_validate_"
+                "aggregate_swing_margin_then_execute"
+            ),
+            "aggregate_swing_margin_limit": "research_capital",
+            "breach_action": "fail_closed_no_clipping_or_rescaling",
+            "challenge_loss_limits": "not_applied_G1_core_edge",
+        },
+    }
+    for key, expected in exact.items():
+        if _mapping(evaluator[key], f"development_evaluator.{key}") != expected:
+            raise CarverTrendCarryFtmo5SpecValidationError(
+                f"development evaluator {key} drifted"
+            )
 
 
 def _mapping(value: Any, label: str) -> dict[str, Any]:

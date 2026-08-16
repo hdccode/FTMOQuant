@@ -17,6 +17,15 @@ def test_frozen_carver_spec_semantic_sha() -> None:
     spec = load_carver_trend_carry_ftmo5_spec()
     assert spec.candidate_id == "carver_trend_carry_ftmo5_v1"
     assert spec.semantic_sha256 == CARVER_TREND_CARRY_FTMO5_CONFIG_SHA256
+    assert (
+        spec.semantic_sha256
+        == "f1831cf1cdedeedfc21610054da8e542796c8b3c0cbc26a62074bdbf1ab39365"
+    )
+    assert spec.version == "1.1.0"
+    assert spec.evaluator.research_capital == 500000
+    assert spec.evaluator.annual_volatility_target == 0.25
+    assert spec.evaluator.instrument_diversification_multiplier == 1
+    assert spec.evaluator.bootstrap_seed == 14042026
     assert spec.canonical_document["universe"]["futures_to_execution"] == {
         "EUR": "EUR/USD.DUKASCOPY",
         "GOLD": "XAU_USD.OANDA",
@@ -48,6 +57,7 @@ def test_frozen_carver_spec_semantic_sha() -> None:
         ("combination", "forecast_diversification_multiplier", 1.30),
         ("carry", "smoothing_ewm_span_days", 91),
         ("research_boundary", "validation", "unlocked"),
+        ("development_evaluator", "input_contract", {}),
     ],
 )
 def test_carver_spec_rejects_frozen_semantic_changes(

@@ -1,7 +1,8 @@
 # carver_trend_carry_ftmo5_v1 — preregistration
 
-This candidate is specified only; it has no DEVELOPMENT result and no evaluator.
-Validation and final holdout are sealed.
+This candidate has a complete preregistered DEVELOPMENT evaluator but no
+DEVELOPMENT result. The final evaluator freeze was completed before any strategy
+return was accessed. Validation and final holdout are sealed.
 
 It uses the pinned pysystemtrade Chapter 15 signal structure at commit
 `b4a25e6e1e33a54a3ecfb45c0f6db5e2b60b84f8`. The ten frozen source-file hashes,
@@ -14,10 +15,10 @@ GOLD, SP500, CRUDE_W, and SOYBEAN use OANDA BID/ASK prices solely as numeric
 execution-price proxies. FTMO G0.8 remains the sole research P&L and deployment
 economics layer: OANDA contract size, margin, financing, commission, leverage,
 and other broker economics are excluded. The CFD/futures basis mismatch must be
-reported and may not be assumed favourable. A later evaluator must use the
-frozen G0.7 cost framework at base and 1.5× costs, existing FTMO constraints
-where compatible, and must retire the candidate after a failing DEVELOPMENT gate
-without tuning.
+reported and may not be assumed favourable. The evaluator uses observed BID/ASK
+spread at base and 1.5× realised-cost stress, the frozen G0.8 economics and
+margin constraint, and must retire the candidate after a failing DEVELOPMENT
+gate without tuning.
 
 ## Pre-evaluation source-ID correction
 
@@ -71,3 +72,80 @@ requires complete request/raw/processed provenance with zero acquisition
 defects, plus compatibility with the frozen evaluator's existing rule of using
 the first genuine eligible observation strictly later than the completed signal.
 All non-observed minutes remain reported; none are filled or interpolated.
+
+## Final pre-evaluation evaluator freeze
+
+The evaluator contract is part of the strategy semantic document. The research
+input contract preserves the OANDA cache's acquisition-time Carver SHA
+`489b53ab...e210d`; the new semantic SHA adds evaluator decisions without
+rewriting or relabelling that immutable raw/processed cache.
+
+The research
+account is fixed USD 500,000 notional capital with a 25% annual volatility
+target. These values, the 256-business-day sizing year, forecast divided by the
+average absolute forecast of 10, and the order instrument-weight then IDM come
+from pinned pysystemtrade. Each of the five instruments has weight 0.20. The
+five-market IDM is 1.0: the pinned `rob_system` value of 2.75 belongs to a much
+larger universe and was not imported. This is a performance-blind neutral
+convention, not an estimated diversification uplift.
+
+Desired continuous FTMO lots are:
+
+`(500000 * 0.25 / sqrt(256)) / (causal daily proxy price-unit volatility * G0.8 contract size) * (combined forecast / 10) * 0.20 * 1.0`.
+
+G0.8's frozen continuous research-target convention overrides pysystemtrade's
+default whole-futures-contract rounding. No lot quantization or deployment
+minimum is applied. The volatility input is calculated from causal daily closes
+of each numeric CFD execution proxy using the pinned mixed-volatility form.
+The pinned `rob_system` backfill option is disabled because it would expose an
+early row to later volatility; unavailable warm-up volatility produces no
+target instead.
+Aggregate G0.8 Swing margin after a proposed transition may not exceed the fixed
+research capital; a breach fails closed and is never clipped or rescaled.
+Challenge loss-limit optimization is outside this G1/core-edge evaluation.
+
+Reference rows are aggregated by UTC date: adjusted price uses the last row and
+annualised futures roll uses the day's mean. The signal is complete only at the
+next UTC midnight, avoiding hindsight about which intraday row was final. There
+is one rebalance per completed daily signal. A one-minute close is available at
+candle start plus one minute. Buys use ASK close and sells use BID close at the
+first genuine G0.8-session-eligible observation strictly later than signal
+completion. No missing provider minute is synthesized, filled, or interpolated.
+Because signals complete only at UTC midnight and marks occur at the next UTC
+boundary, the in-memory evaluation view retains only each UTC date's first
+session-eligible genuine observation and last genuine observation. Every source
+row is still validated by the frozen cache QA; this deterministic downselection
+does not create a price or alter which observation can execute or mark.
+SOYBN ×100 remains confined to the immediate G0.8 boundary.
+
+Position changes trade only the delta to the continuous desired lots. Observed
+half-spread is embedded in the side fill and G0.8 commission is charged on every
+executed delta side. Daily return is the change in total liquidation equity,
+including realised and unrealised P&L, divided by fixed USD 500,000. The daily
+mark uses the last genuine close available before UTC midnight and values open
+longs at BID and shorts at ASK. Each fold runs an independent account through
+its expanding warm-up, scores only its comparison window, and virtually
+liquidates remaining positions at its final pre-boundary genuine observation,
+including exit commission. Rollover is explicitly unmodelled, so every artifact
+is pre-rollover and not fully deployment-calibrated.
+
+Base cost is observed spread plus G0.8 commission. The 1.5× result subtracts an
+additional half of that realised cost. Turnover is absolute traded G0.8 notional
+divided by fixed capital; daily Sharpe uses sqrt(252), and drawdown compounds the
+sequential fixed-capital daily return series. Per-instrument contribution is
+cumulative instrument net P&L divided by capital plus its share of pooled net
+P&L. Trend/carry attribution is not reported: the frozen gate did not require it
+and the combined forecast executes as one position, so an additive cost
+allocation would be a new ambiguous assumption.
+
+The pooled mean CI reuses FTMOQuant's `arch==8.0.0` stationary bootstrap:
+two-sided 95% basic interval, block size 20 daily observations, 10,000
+repetitions, and seed 14042026. The gate is purely mechanical: positive pooled
+mean, at least two positive fold means, positive median fold mean, positive
+pooled mean under 1.5× costs, and no implementation/data-integrity failure.
+
+Deterministic artifacts are `daily_returns.csv`, `trades.csv`, and `result.json`.
+The wall-clock execution timestamp lives only in `run_provenance.json`, so the
+result files and semantic result hash are reproducible from identical frozen
+inputs. The CLI exposes DEVELOPMENT inputs only and rejects any path containing
+`validation` or `holdout`.

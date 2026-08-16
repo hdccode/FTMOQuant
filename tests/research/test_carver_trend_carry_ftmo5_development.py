@@ -11,16 +11,24 @@ import ftmoquant.research.carver_trend_carry_ftmo5_development as carver
 from ftmoquant.prop_rules.g0_8_cfd_economics import load_g08_cfd_economics
 from ftmoquant.research.carver_trend_carry_ftmo5_development import (
     CarverTrendCarryFtmo5EvaluationError,
+    DesiredPosition,
+    ExecutionObservation,
+    SyntheticFoldInput,
+    build_desired_positions,
     causal_carry,
     causal_ewmac,
     cfd_margin_requirement,
     cfd_net_pnl,
     combine_forecasts,
     comparison_fold,
+    evaluate_synthetic_fold,
     first_eligible_cfd_execution,
     first_strictly_later_execution,
+    forecast_to_desired_lots,
     normalize_execution_price,
+    pinned_mixed_daily_price_volatility,
     stressed_cost,
+    summarize_development,
     verify_reference_sources,
 )
 from ftmoquant.research.carver_trend_carry_ftmo5_spec import (
@@ -81,7 +89,7 @@ def test_strict_later_fold_warmup_and_cost_stress() -> None:
     assert stressed_cost(0.01) == (0.01, 0.015)
     assert (
         CARVER_TREND_CARRY_FTMO5_CONFIG_SHA256
-        == "489b53abff19e041afda9cc5ba210a67252bf89dea87c8b9994f08c4422e210d"
+        == "f1831cf1cdedeedfc21610054da8e542796c8b3c0cbc26a62074bdbf1ab39365"
     )
 
 
@@ -160,3 +168,252 @@ def test_g08_sha_drift_fails_closed_and_rollover_warning_propagates(
     ):
         carver._frozen_g08_economics()
     assert "not fully calibrated" in economics.rollover_warning
+
+
+def test_frozen_sizing_is_continuous_and_uses_carver_cash_volatility() -> None:
+    spec = load_carver_trend_carry_ftmo5_spec()
+    result = forecast_to_desired_lots(
+        combined_forecast=Decimal("10"),
+        daily_proxy_price_volatility=Decimal("10"),
+        contract_size=Decimal("100"),
+        instrument_weight=Decimal("0.2"),
+        spec=spec,
+    )
+    assert result == Decimal("1.5625")
+    assert result != result.to_integral_value()
+    day = pd.Timestamp("2020-04-12T00:00:00Z")
+    desired = build_desired_positions(
+        "XAU_USD.OANDA",
+        pd.Series([10.0], index=pd.DatetimeIndex([day])),
+        pd.Series([10.0], index=pd.DatetimeIndex([day])),
+        load_g08_cfd_economics(),
+        spec,
+    )
+    assert desired[0].signal_timestamp_utc == datetime(2020, 4, 13, tzinfo=UTC)
+    assert desired[0].desired_lots == Decimal("1.5625")
+
+
+def test_signal_and_proxy_volatility_are_causal_after_warmup() -> None:
+    index = pd.date_range("2010-01-01", periods=700, freq="D", tz="UTC")
+    original = pd.Series([100 + item * 0.1 for item in range(700)], index=index)
+    changed = original.copy()
+    changed.iloc[650:] = changed.iloc[650:] * 10
+    first = causal_ewmac(original, 16, 64, 3.75)
+    second = causal_ewmac(changed, 16, 64, 3.75)
+    pd.testing.assert_series_equal(first.iloc[200:650], second.iloc[200:650])
+    pd.testing.assert_series_equal(
+        pinned_mixed_daily_price_volatility(original).iloc[200:650],
+        pinned_mixed_daily_price_volatility(changed).iloc[200:650],
+    )
+
+
+def test_complete_synthetic_fold_uses_strict_later_bid_ask_g08_and_sparse_rows() -> (
+    None
+):
+    start = datetime(2020, 4, 11, tzinfo=UTC)
+    end = datetime(2020, 4, 21, tzinfo=UTC)
+    observations = _synthetic_observations(start, end)
+    signal = datetime(2020, 4, 13, tzinfo=UTC)
+    desired = tuple(
+        DesiredPosition(
+            instrument,
+            signal,
+            Decimal("10"),
+            Decimal("1"),
+            Decimal("-1") if instrument == "SPX500_USD.OANDA" else Decimal("1"),
+        )
+        for instrument in carver._MAPPING
+    )
+    result = evaluate_synthetic_fold(
+        SyntheticFoldInput("dev_fold_1", desired, observations, start, end)
+    )
+    transitions = result["transitions"]
+    assert len(transitions) == 5
+    assert all(
+        datetime.fromisoformat(item["execution_timestamp_utc"].replace("Z", "+00:00"))
+        > signal
+        for item in transitions
+    )
+    assert all(
+        item["fill_price"]
+        == (item["bid"] if item["instrument"] == "SPX500_USD.OANDA" else item["ask"])
+        for item in transitions
+    )
+    soybean = next(
+        item for item in transitions if item["instrument"] == "SOYBN_USD.OANDA"
+    )
+    assert Decimal(soybean["bid"]) > Decimal("900")
+    commissions = {
+        item["instrument"]: Decimal(item["commission"]) for item in transitions
+    }
+    assert commissions["EUR/USD.DUKASCOPY"] > 0
+    assert commissions["XAU_USD.OANDA"] > 0
+    assert commissions["SPX500_USD.OANDA"] == 0
+    assert commissions["WTICO_USD.OANDA"] == 0
+    assert commissions["SOYBN_USD.OANDA"] == 0
+    rows = result["daily_rows"]
+    assert len(rows) == 10
+    assert all(row["cost_stress_1_5x_return"] <= row["net_return"] for row in rows)
+
+
+def test_sparse_observation_is_not_filled_and_margin_breach_fails_closed() -> None:
+    start = datetime(2020, 4, 11, tzinfo=UTC)
+    end = datetime(2020, 4, 16, tzinfo=UTC)
+    observations = _synthetic_observations(start, end)
+    signal = datetime(2020, 4, 13, 14, 1, tzinfo=UTC)
+    desired = DesiredPosition(
+        "XAU_USD.OANDA", signal, Decimal("10"), Decimal("1"), Decimal("1")
+    )
+    result = evaluate_synthetic_fold(
+        SyntheticFoldInput("dev_fold_1", (desired,), observations, start, end)
+    )
+    transition = result["transitions"][0]
+    assert transition["execution_timestamp_utc"] == "2020-04-14T14:01:00Z"
+    too_large = DesiredPosition(
+        "SOYBN_USD.OANDA",
+        datetime(2020, 4, 13, tzinfo=UTC),
+        Decimal("10"),
+        Decimal("1"),
+        Decimal("1000"),
+    )
+    with pytest.raises(CarverTrendCarryFtmo5EvaluationError, match="swing margin"):
+        evaluate_synthetic_fold(
+            SyntheticFoldInput("dev_fold_1", (too_large,), observations, start, end)
+        )
+
+
+def test_fold_scores_only_comparison_after_independent_warmup() -> None:
+    compare_start = datetime(2020, 4, 11, tzinfo=UTC)
+    compare_end = datetime(2020, 4, 16, tzinfo=UTC)
+    observations = _synthetic_observations(
+        datetime(2020, 4, 8, tzinfo=UTC), compare_end
+    )
+    warmup = DesiredPosition(
+        "EUR/USD.DUKASCOPY",
+        datetime(2020, 4, 9, tzinfo=UTC),
+        Decimal("10"),
+        Decimal("1"),
+        Decimal("1"),
+    )
+    result = evaluate_synthetic_fold(
+        SyntheticFoldInput(
+            "dev_fold_1", (warmup,), observations, compare_start, compare_end
+        )
+    )
+    assert result["transitions"][0]["execution_timestamp_utc"] < _utc_text(
+        compare_start
+    )
+    assert len(result["daily_rows"]) == 5
+    assert result["daily_rows"][0]["session_date"] == "2020-04-11"
+
+
+def test_bootstrap_gate_and_result_artifact_are_deterministic(tmp_path: Path) -> None:
+    spec = load_carver_trend_carry_ftmo5_spec()
+    fold_results = []
+    for index, fold_id in enumerate(("dev_fold_1", "dev_fold_2", "dev_fold_3")):
+        values = [0.001 + index * 0.0001] * 20
+        rows = [
+            {
+                "fold_id": fold_id,
+                "session_date": f"202{index}-01-{day + 1:02d}",
+                "mark_boundary_utc": f"202{index}-01-{day + 2:02d}T00:00:00Z",
+                "net_return": value,
+                "realized_spread_and_commission_cost_return": 0.0001,
+                "cost_stress_1_5x_return": value - 0.00005,
+                "per_instrument_net_return": {
+                    instrument: value / 5 for instrument in carver._MAPPING
+                },
+            }
+            for day, value in enumerate(values)
+        ]
+        fold_results.append(
+            {
+                "fold_id": fold_id,
+                "daily_rows": rows,
+                "transitions": [],
+                "summary": {
+                    "fold_id": fold_id,
+                    "mean_daily_net_return": sum(values) / len(values),
+                    "hard_failures": [],
+                },
+            }
+        )
+    first = summarize_development(fold_results, spec=spec)
+    second = summarize_development(fold_results, spec=spec)
+    assert first == second
+    assert first["outcome"] == "PASS_DEVELOPMENT"
+    economics = load_g08_cfd_economics()
+    carver._write_result_artifacts(
+        output_dir=tmp_path / "one",
+        spec=spec,
+        economics=economics,
+        inputs={"synthetic": True},
+        fold_results=fold_results,
+        summary=first,
+        run_timestamp_utc=datetime(2026, 8, 16, tzinfo=UTC),
+    )
+    carver._write_result_artifacts(
+        output_dir=tmp_path / "two",
+        spec=spec,
+        economics=economics,
+        inputs={"synthetic": True},
+        fold_results=fold_results,
+        summary=second,
+        run_timestamp_utc=datetime(2026, 8, 17, tzinfo=UTC),
+    )
+    assert (tmp_path / "one/result.json").read_bytes() == (
+        tmp_path / "two/result.json"
+    ).read_bytes()
+    assert (tmp_path / "one/run_provenance.json").read_bytes() != (
+        tmp_path / "two/run_provenance.json"
+    ).read_bytes()
+
+
+def test_cli_has_no_validation_or_holdout_argument() -> None:
+    parser_source = Path(carver.__file__).read_text(encoding="utf-8")
+    assert 'parser.add_argument("--validation' not in parser_source
+    assert 'parser.add_argument("--holdout' not in parser_source
+
+
+def _synthetic_observations(
+    start: datetime, end: datetime
+) -> dict[str, tuple[ExecutionObservation, ...]]:
+    bases = {
+        "EUR/USD.DUKASCOPY": Decimal("1.10"),
+        "XAU_USD.OANDA": Decimal("1700"),
+        "SPX500_USD.OANDA": Decimal("3000"),
+        "WTICO_USD.OANDA": Decimal("30"),
+        "SOYBN_USD.OANDA": Decimal("10"),
+    }
+    spreads = {
+        "EUR/USD.DUKASCOPY": Decimal("0.0002"),
+        "XAU_USD.OANDA": Decimal("0.2"),
+        "SPX500_USD.OANDA": Decimal("1"),
+        "WTICO_USD.OANDA": Decimal("0.02"),
+        "SOYBN_USD.OANDA": Decimal("0.01"),
+    }
+    result: dict[str, tuple[ExecutionObservation, ...]] = {}
+    for instrument, base in bases.items():
+        rows = []
+        current = start
+        count = 0
+        while current < end:
+            if current.weekday() < 5:
+                candle = current + timedelta(hours=14)
+                bid = base + Decimal(count) / Decimal("10")
+                rows.append(
+                    ExecutionObservation(
+                        candle,
+                        candle + timedelta(minutes=1),
+                        bid,
+                        bid + spreads[instrument],
+                    )
+                )
+                count += 1
+            current += timedelta(days=1)
+        result[instrument] = tuple(rows)
+    return result
+
+
+def _utc_text(value: datetime) -> str:
+    return value.isoformat().replace("+00:00", "Z")
