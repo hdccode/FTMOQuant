@@ -997,7 +997,7 @@ def main(argv: Sequence[str] | None = None) -> None:
         evaluation_config_path=cast(Path, args.evaluation_config),
         output_dir=cast(Path, args.output),
     )
-    print(json.dumps(summary, sort_keys=True))
+    print(_canonical_bytes(summary).decode())
 
 
 if __name__ == "__main__":

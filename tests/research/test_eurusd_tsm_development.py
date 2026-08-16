@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from dataclasses import replace
 from datetime import UTC, datetime, timedelta
 from decimal import Decimal
@@ -346,6 +347,36 @@ def test_semantic_sha_mismatch_blocks_runner(
             evaluation_config_path=tmp_path / "never-opened-config.yaml",
             output_dir=tmp_path / "output",
         )
+
+
+def test_cli_prints_summary_containing_paths_without_running_evaluation(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    summary = {"artifact_path": tmp_path / "result.json", "outcome": "TEST"}
+
+    def completed_run(**_: object) -> tuple[None, None, dict[str, object]]:
+        return None, None, summary
+
+    monkeypatch.setattr(development_module, "run_eurusd_tsm_development", completed_run)
+    development_module.main(
+        [
+            "--universe-readiness",
+            str(tmp_path / "readiness.json"),
+            "--development-root",
+            f"EUR/USD.DUKASCOPY={tmp_path / 'development'}",
+            "--evaluation-config",
+            str(tmp_path / "config.json"),
+            "--output",
+            str(tmp_path / "output"),
+        ]
+    )
+
+    assert json.loads(capsys.readouterr().out) == {
+        "artifact_path": str(tmp_path / "result.json"),
+        "outcome": "TEST",
+    }
 
 
 def _signal_pairs(timeframe: Timeframe) -> tuple[CompletedPair, ...]:
