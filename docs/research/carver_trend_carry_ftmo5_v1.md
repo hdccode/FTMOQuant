@@ -46,3 +46,28 @@ is applied only to raw `SOYBN_USD.OANDA` BID/ASK prices: multiply each by `100`
 before G0.8 FTMO P&L or economics. No other execution proxy is rescaled, and
 this does not change G0.8 or any strategy, portfolio, cost, causality, fold, or
 promotion-gate semantics.
+
+## DEVELOPMENT OANDA acquisition boundary
+
+The OANDA acquisition command is restricted to the frozen half-open DEVELOPMENT
+interval `2019-03-11T00:00:00Z` through `2023-04-11T00:00:00Z`. It acquires
+only M1 BID/ASK candles for `XAU_USD`, `SPX500_USD`, `WTICO_USD`, and
+`SOYBN_USD`; it does not request EUR, validation, or holdout data. Raw OANDA
+JSON responses and redacted request metadata are immutable under `raw/`.
+Unscaled, parsed BID/ASK OHLC rows are written separately under `processed/`,
+and each instrument has a QA report under `qa/` recording ordering, duplicate,
+BID/ASK, range-boundary, and missing-interval results. Missing minutes are
+reported without filling or interpolation. This acquisition path computes no
+signals, P&L, returns, or candidate-performance statistics.
+
+### Cache-only availability QA correction
+
+OANDA M1 candles are treated as returned price observations, not as a promise
+of a synthetic candle for every wall-clock minute. QA therefore separates: (1)
+proof that the 430 recorded request windows exactly partition DEVELOPMENT and
+that every complete returned candle survives processing; (2) calendar minutes
+for which OANDA returned no candle; and (3) strategy usability. Readiness
+requires complete request/raw/processed provenance with zero acquisition
+defects, plus compatibility with the frozen evaluator's existing rule of using
+the first genuine eligible observation strictly later than the completed signal.
+All non-observed minutes remain reported; none are filled or interpolated.

@@ -71,6 +71,9 @@ def test_strict_later_fold_warmup_and_cost_stress() -> None:
     assert first_strictly_later_execution(
         signal, (signal, signal + timedelta(minutes=1))
     ) == signal + timedelta(minutes=1)
+    assert first_strictly_later_execution(
+        signal, (signal, signal + timedelta(minutes=15))
+    ) == signal + timedelta(minutes=15)
     assert comparison_fold(datetime(2019, 5, 1, tzinfo=UTC)) is None
     assert comparison_fold(signal) == "dev_fold_1"
     assert comparison_fold(datetime(2021, 5, 1, tzinfo=UTC)) == "dev_fold_2"

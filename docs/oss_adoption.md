@@ -205,6 +205,23 @@ validator now admits exactly the legacy `g0.5-1` identity and the new
 that validator without changing their aggregation or fail-closed coverage
 semantics.
 
+## Carver OANDA DEVELOPMENT acquisition reuse audit
+
+Before implementing the OANDA acquisition boundary, FTMOQuant reviewed the
+following maintained, license-compatible GitHub candidates:
+
+| Candidate | License / finding | Decision |
+| --- | --- | --- |
+| [oanda/v20-python](https://github.com/oanda/v20-python) | MIT; official OANDA v20 bindings, but its small, older binding layer does not supply immutable response archival, a half-open DEVELOPMENT contract, or project QA artifacts. | Not adopted. |
+| [hootnot/oanda-api-v20](https://github.com/hootnot/oanda-api-v20) | MIT; mature community wrapper with a 5,000-candle request factory. Its pagination pattern informed the fixed 5,000-minute request ceiling, but no implementation or source text was copied. | Reference-only. |
+
+The resulting project-owned adapter deliberately uses the standard-library HTTPS
+client for the one OANDA candles endpoint. This avoids adding a general trading
+SDK solely to issue a fixed GET request and keeps credentials out of persisted
+metadata. It stores each unmodified JSON response and a redacted request record
+before parsing, does not synthesize missing candles, and does not apply the
+SOYBN ×100 economics-boundary transform.
+
 ## G0.6 native derived-bar adoption
 
 G0.6 uses NautilusTrader `2.0.0rc2` bar-to-bar composite aggregation. Its four
