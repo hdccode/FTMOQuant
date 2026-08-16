@@ -53,10 +53,12 @@ def test_causal_ewmac_carry_caps_weights_and_fdm() -> None:
     price = pd.Series(range(100, 400), index=index, dtype=float)
     multiple = pd.DataFrame(
         {
-            "PRICE": price,
             "CARRY": price + 2,
-            "PRICE_CONTRACT": 202406,
             "CARRY_CONTRACT": 202409,
+            "PRICE": price,
+            "PRICE_CONTRACT": 202406,
+            "FORWARD": price + 1,
+            "FORWARD_CONTRACT": 202412,
         },
         index=index,
     )
@@ -72,6 +74,40 @@ def test_causal_ewmac_carry_caps_weights_and_fdm() -> None:
         + forecasts.carry * 0.50
     ) * 1.31
     pd.testing.assert_series_equal(forecasts.combined, expected)
+
+
+def test_carry_requires_exact_pinned_six_column_schema_and_ignores_forward() -> None:
+    index = pd.date_range("2020-01-01", periods=300, freq="D")
+    price = pd.Series(range(100, 400), index=index, dtype=float)
+    multiple = pd.DataFrame(
+        {
+            "CARRY": price + 2,
+            "CARRY_CONTRACT": 202409,
+            "PRICE": price,
+            "PRICE_CONTRACT": 202406,
+            "FORWARD": price + 1,
+            "FORWARD_CONTRACT": 202412,
+        },
+        index=index,
+    )
+    expected = causal_carry(multiple)
+    changed_forward = multiple.copy()
+    changed_forward["FORWARD"] = price * 1000
+    changed_forward["FORWARD_CONTRACT"] = 209912
+    pd.testing.assert_series_equal(causal_carry(changed_forward), expected)
+
+    with pytest.raises(
+        CarverTrendCarryFtmo5EvaluationError,
+        match="multiple-price columns are not exact",
+    ):
+        causal_carry(multiple.drop(columns="FORWARD"))
+
+    unexpected = multiple.assign(UNEXPECTED=1)
+    with pytest.raises(
+        CarverTrendCarryFtmo5EvaluationError,
+        match="multiple-price columns are not exact",
+    ):
+        causal_carry(unexpected)
 
 
 def test_strict_later_fold_warmup_and_cost_stress() -> None:

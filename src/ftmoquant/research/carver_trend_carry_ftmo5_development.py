@@ -157,8 +157,15 @@ def causal_carry(
     multiple_prices: pd.DataFrame, adjusted_price: pd.Series | None = None
 ) -> pd.Series:
     """Pinned-Carver annualised roll/return-vol form; no future rows are used."""
-    required = {"PRICE", "CARRY", "PRICE_CONTRACT", "CARRY_CONTRACT"}
-    if set(multiple_prices.columns) != required:
+    pinned_columns = (
+        "CARRY",
+        "CARRY_CONTRACT",
+        "PRICE",
+        "PRICE_CONTRACT",
+        "FORWARD",
+        "FORWARD_CONTRACT",
+    )
+    if tuple(multiple_prices.columns) != pinned_columns:
         raise CarverTrendCarryFtmo5EvaluationError(
             "multiple-price columns are not exact"
         )
