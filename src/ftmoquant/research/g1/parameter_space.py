@@ -32,7 +32,8 @@ class ParameterSpaceError(ValueError):
 
 
 class Parameter(Protocol):
-    name: str
+    @property
+    def name(self) -> str: ...
 
     def contains(self, value: ParameterValue) -> bool: ...
 

@@ -12,6 +12,8 @@ from ftmoquant.research.g1.parameter_space import (
     ParameterMapping,
     ParameterSpace,
     ParameterValue,
+    canonical_parameter_json,
+    enumerate_grid,
 )
 from ftmoquant.research.g1.sessions import SessionId
 
@@ -77,6 +79,15 @@ class StrategyFamily[DataT, SignalT](ABC):
 
         return ()
 
+    def enumerate_parameters(self) -> tuple[dict[str, ParameterValue], ...]:
+        """Return the exact finite family grid, allowing conditional overrides."""
+
+        configurations = tuple(enumerate_grid(self.parameter_space))
+        identities = tuple(canonical_parameter_json(item) for item in configurations)
+        if len(set(identities)) != len(identities):
+            raise FamilyContractError("family exact grid contains duplicates")
+        return configurations
+
     def contract_document(self) -> dict[str, object]:
         return {
             "family_id": self.metadata.family_id,
@@ -87,6 +98,7 @@ class StrategyFamily[DataT, SignalT](ABC):
                 session.value for session in self.metadata.eligible_sessions
             ),
             "parameter_space": self.parameter_space.as_dict(),
+            "exact_parameter_configurations": self.enumerate_parameters(),
         }
 
 

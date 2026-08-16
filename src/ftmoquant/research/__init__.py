@@ -1,5 +1,13 @@
 """Isolated research support with no strategy-selection policy."""
 
+from ftmoquant.research.eurusd_tsm_spec import (
+    EURUSD_TSM_SEMANTIC_SHA256,
+    EURUSD_TSM_SPEC_PATH,
+    EurusdTsmSpec,
+    EurusdTsmSpecError,
+    load_eurusd_tsm_spec,
+    semantic_sha256_for_document,
+)
 from ftmoquant.research.experiment_spec import (
     REGISTRY_COLUMNS,
     ExperimentRegistryEntry,
@@ -37,6 +45,10 @@ from ftmoquant.research.ts_momentum_spec import (
 )
 
 __all__ = [
+    "EURUSD_TSM_SEMANTIC_SHA256",
+    "EURUSD_TSM_SPEC_PATH",
+    "EurusdTsmSpec",
+    "EurusdTsmSpecError",
     "REGISTRY_COLUMNS",
     "ExperimentRegistryEntry",
     "ExperimentRegistryValidationError",
@@ -48,9 +60,11 @@ __all__ = [
     "TsMomentumSpecValidationError",
     "canonical_spec_json",
     "load_experiment_registry",
+    "load_eurusd_tsm_spec",
     "load_trend_pullback_spec",
     "load_ts_momentum_spec",
     "strategy_config_sha256",
+    "semantic_sha256_for_document",
     "ts_momentum_config_sha256",
     "SESSION_RANGE_EXPANSION_CONFIG_SHA256",
     "SESSION_RANGE_EXPANSION_SPEC_PATH",

@@ -1,5 +1,12 @@
 """Preregistered deterministic trading strategies."""
 
+from ftmoquant.strategies.eurusd_tsm import (
+    EurusdTsmFamily,
+    EurusdTsmParameters,
+    EurusdTsmSignal,
+    EurusdTsmState,
+    EurusdTsmValidationError,
+)
 from ftmoquant.strategies.leo_gbpusd import (
     LeoCompleted15mBar,
     LeoEntry,
@@ -56,6 +63,11 @@ from ftmoquant.strategies.ts_momentum import (
 )
 
 __all__ = (
+    "EurusdTsmFamily",
+    "EurusdTsmParameters",
+    "EurusdTsmSignal",
+    "EurusdTsmState",
+    "EurusdTsmValidationError",
     "FROZEN_CONFIG_SHA256",
     "CompletedBarPairer",
     "CompletedPair",

@@ -25,16 +25,19 @@ class SelectionError(ValueError):
 class SelectionPolicy:
     min_trade_count: int
     min_positive_folds: int
-    max_drawdown: float
+    max_drawdown: float | None
     max_year_concentration: float | None
     max_execution_sensitivity: float | None
     min_evaluated_neighbours: int = 0
     min_acceptable_neighbour_fraction: float = 0.0
+    required_fold_count: int | None = None
 
     def __post_init__(self) -> None:
         if self.min_trade_count < 0 or self.min_positive_folds <= 0:
             raise SelectionError("trade/fold minima are invalid")
-        if not math.isfinite(self.max_drawdown) or self.max_drawdown < 0.0:
+        if self.max_drawdown is not None and (
+            not math.isfinite(self.max_drawdown) or self.max_drawdown < 0.0
+        ):
             raise SelectionError("max_drawdown must be finite and non-negative")
         for name, value in (
             ("max_year_concentration", self.max_year_concentration),
@@ -46,6 +49,8 @@ class SelectionPolicy:
             0.0 <= self.min_acceptable_neighbour_fraction <= 1.0
         ):
             raise SelectionError("plateau requirements are invalid")
+        if self.required_fold_count is not None and self.required_fold_count <= 0:
+            raise SelectionError("required_fold_count must be positive when set")
 
 
 @dataclass(frozen=True, slots=True)
@@ -103,7 +108,15 @@ def select_candidate(
                 reasons.append("inadequate trade count")
             if summary.positive_fold_count < policy.min_positive_folds:
                 reasons.append("insufficient positive folds")
-            if summary.max_drawdown > policy.max_drawdown:
+            if (
+                policy.required_fold_count is not None
+                and summary.fold_count != policy.required_fold_count
+            ):
+                reasons.append("required DEVELOPMENT fold count is incomplete")
+            if (
+                policy.max_drawdown is not None
+                and summary.max_drawdown > policy.max_drawdown
+            ):
                 reasons.append("drawdown exceeds bound")
             if not reasons:
                 hard_survivors[record.trial_id] = summary

@@ -18,7 +18,6 @@ from ftmoquant.research.g1.guards import DevelopmentSearchContext, WalkForwardWi
 from ftmoquant.research.g1.parameter_space import (
     ParameterValue,
     canonical_parameter_json,
-    enumerate_grid,
     suggest_parameters,
 )
 from ftmoquant.research.g1.trials import (
@@ -108,7 +107,7 @@ def run_search(
 
     registry = TrialRegistry()
     if config.mode is SearchMode.EXACT_GRID:
-        for parameters in enumerate_grid(family.parameter_space):
+        for parameters in family.enumerate_parameters():
             registry.add(
                 _evaluate_configuration(family, context, evaluator, parameters)
             )

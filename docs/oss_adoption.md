@@ -959,3 +959,32 @@ directly through its in-memory `TPESampler(seed=...)`, ask/tell, typed
 suggestion, and failed-trial APIs. FTMOQuant owns only the bounded family
 adapter, duplicate fail-closed rule, complete registry, and deterministic
 artifact schema around it.
+
+## eurusd_tsm_v1 local reuse audit
+
+No new third-party repository code was required for the first generic family.
+The implementation refactors existing project-native semantics:
+
+- `ftmoquant.strategies.ts_momentum.RawDirectionalTarget` is reused directly,
+  together with its raw `-1/0/+1`, strictly-causal, hold-until-changed design;
+- `ftmoquant.strategies.trend_pullback.CompletedPair`, `PriceBar`, and
+  `Timeframe` are reused directly for completed synchronized H1/H4 BID/ASK
+  midpoint signal inputs;
+- `ftmoquant.research.stage_g.frozen_development_folds` and the existing
+  G0.7/Nautilus evaluation boundary remain the fold and execution authorities;
+- the existing TSM evaluator's `net_return - realized_cost / 2` convention is
+  frozen as the 1.5× cost stress.
+
+The existing daily 252-observation TSM state is unsuitable for a conditional
+H1/H4 family and was not duplicated or forced into the new grid. The pinned
+Carver mixed daily price-volatility helper was inspected but not adopted: its
+daily horizon and `1e-10` floor conflict with the requested intraday/multiweek,
+no-manufactured-volatility semantics. The family instead calls NumPy's vetted
+`std(ddof=1)` implementation directly over a transparent causal rolling window
+of one-bar log returns. No third-party estimator implementation was copied.
+
+Synthetic tests in `tests/strategies/test_eurusd_tsm.py` cover causal warm-up,
+no backfill, long/short/flat/deadband behavior, refresh timing, future-row
+invariance, missing-bar reset, neighbours, and 1% normalization. Tests in
+`tests/research/test_eurusd_tsm_spec.py` cover the exact 90-cell grid, semantic
+hash scope, sealed partitions, folds, thresholds, and deterministic selector.

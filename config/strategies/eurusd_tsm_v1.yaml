@@ -1,0 +1,185 @@
+schema_version: 1
+
+family:
+  family_id: eurusd_tsm_v1
+  version: 1.0.0
+  status: preregistered_not_run
+  economic_hypothesis: >-
+    EUR/USD exhibits time-series persistence over some economically meaningful
+    intraday-to-multiweek horizons, such that the sign and magnitude of past
+    price movement contains information about subsequent returns after
+    realistic trading costs.
+
+dataset:
+  instrument_id: EUR/USD.DUKASCOPY
+  universe_id: g1_4_fx_usd_liquid_v1
+  universe_plan_sha256: 16c29df7bae3bde0a9e64e2cc7758f158186182a3d7a464347791400abcfff69
+  universe_readiness_sha256: e6d511bb7bbea6b80c42b00c3f1b4c79ea35cd4532d5f71b69ee8f43bea3f8a0
+  partition: development
+  development_start_utc: "2019-03-11T00:00:00Z"
+  development_end_exclusive_utc: "2023-04-11T00:00:00Z"
+  source: existing_canonical_g0_5_g0_6_derived_bars
+  missing_data_policy: no_fill_no_interpolation_reset_signal_history
+
+session:
+  session_id: all
+  optimized: false
+
+parameter_grid:
+  timeframes:
+    - timeframe: H1
+      bid_bar_type: EUR/USD.DUKASCOPY-1-HOUR-BID-INTERNAL
+      ask_bar_type: EUR/USD.DUKASCOPY-1-HOUR-ASK-INTERNAL
+      lookback_bars: [24, 72, 120, 240, 480]
+      refresh_interval_bars: [1, 4, 24]
+    - timeframe: H4
+      bid_bar_type: EUR/USD.DUKASCOPY-4-HOUR-BID-INTERNAL
+      ask_bar_type: EUR/USD.DUKASCOPY-4-HOUR-ASK-INTERNAL
+      lookback_bars: [6, 18, 30, 60, 120]
+      refresh_interval_bars: [1, 3, 6]
+  deadband_volatility_units: [0.0, 0.25, 0.5]
+  conditional_combination_rule: >-
+    combine each timeframe only with its own lookback and refresh sets
+  expected_unique_trial_count: 90
+
+signal:
+  price: synchronized_completed_bid_ask_midpoint_close
+  trailing_return: ln(C_t / C_t_minus_lookback_bars)
+  volatility:
+    estimator: numpy_sample_standard_deviation_of_causal_one_bar_log_returns
+    observation_window: max(20, lookback_bars)
+    degrees_of_freedom: 1
+    trailing_horizon_scale: sqrt(lookback_bars)
+    minimum_required_closes: max(20, lookback_bars) + 1
+    unavailable_policy: no_signal
+    zero_or_nonfinite_policy: no_signal
+    floor_or_tiny_value_manufacture: false
+    backfill: false
+  normalized_trailing_return: >-
+    trailing_return / (one_bar_log_return_sample_std * sqrt(lookback_bars))
+  targets:
+    long_when: normalized_trailing_return > deadband
+    short_when: normalized_trailing_return < -deadband
+    flat_otherwise: true
+    raw_magnitudes: [-1, 0, 1]
+    signal_strength_parameter: false
+  refresh:
+    anchor: first_bar_with_available_causal_signal
+    rule: evaluate_first_available_then_every_refresh_interval_bars
+    emit_only_when_target_changes: true
+    hold_latest_target_between_refreshes: true
+  exits:
+    stop_loss: none
+    take_profit: none
+    reverse_or_flatten: subsequent_causal_changed_target_only
+
+risk_normalization:
+  target_annualized_volatility: 0.01
+  implementation: ftmoquant.research.g1.normalization.G1VolatilityNormalizer
+  application: common_post_execution_research_return_normalization
+  ftmo_or_g4_sizing: false
+
+execution_and_costs:
+  engine: existing_nautilus_g0_7_bid_ask_boundary
+  execution_timing: >-
+    first synchronized tradable EUR/USD one-minute BID/ASK observation strictly
+    after completed signal information time
+  spread: observed_paired_bid_ask
+  commission_slippage_latency_profile: canonical_g0_7_uncalibrated_baseline
+  execution_profile_sha256: 5bfb0349fff97a08a8b5d97a6e79b39c694a9038730e1be1e5dcb3f66b3f29cc
+  execution_config_sha256: 6764e2bc41cc92cecd050419bb003da82db2960c3f9feb909b75e0be139a2ba2
+  base_cost_result: existing_frozen_realistic_g1_cost_model
+  cost_stress_multiplier: 1.5
+  cost_stress_formula: net_return_minus_one_half_realized_base_cost
+  adverse_execution_perturbation: unused_no_generic_implementation
+
+development_folds:
+  version: g1.4b-development-folds-1
+  semantic_sha256: 805687e8657c1482d5f8cff4b513385eebfc6a62795735fd4b390019b2e1fdfe
+  folds:
+    - fold_id: dev_fold_1
+      train_start_utc: "2019-03-11T00:00:00Z"
+      train_end_exclusive_utc: "2020-04-11T00:00:00Z"
+      evaluate_start_utc: "2020-04-11T00:00:00Z"
+      evaluate_end_exclusive_utc: "2021-04-11T00:00:00Z"
+    - fold_id: dev_fold_2
+      train_start_utc: "2019-03-11T00:00:00Z"
+      train_end_exclusive_utc: "2021-04-11T00:00:00Z"
+      evaluate_start_utc: "2021-04-11T00:00:00Z"
+      evaluate_end_exclusive_utc: "2022-04-11T00:00:00Z"
+    - fold_id: dev_fold_3
+      train_start_utc: "2019-03-11T00:00:00Z"
+      train_end_exclusive_utc: "2022-04-11T00:00:00Z"
+      evaluate_start_utc: "2022-04-11T00:00:00Z"
+      evaluate_end_exclusive_utc: "2023-04-11T00:00:00Z"
+
+eligibility:
+  required_fold_count: 3
+  minimum_positive_folds: 2
+  minimum_pooled_executed_transitions: 100
+  sample_threshold_basis: existing_trend_pullback_development_minimum
+  gates:
+    - status_is_complete
+    - all_required_folds_present
+    - minimum_pooled_executed_transitions_met
+    - pooled_net_expectancy_gt_zero
+    - pooled_cost_stressed_expectancy_gt_zero
+    - strict_majority_of_fold_expectancies_positive
+    - all_numerical_validity_checks_pass
+  maximum_drawdown_hard_gate: false
+  plateau_hard_gate: false
+  year_concentration_hard_gate: false
+
+neighbours:
+  same_timeframe_required: true
+  exactly_one_dimension_moves: true
+  adjacent_steps_only: true
+  ordered_dimensions: [lookback_bars, deadband, refresh_interval_bars]
+  cross_timeframe_neighbours: false
+
+selector:
+  implementation: ftmoquant.research.g1.selector.select_candidate
+  policy:
+    min_trade_count: 100
+    min_positive_folds: 2
+    max_drawdown: null
+    max_year_concentration: null
+    max_execution_sensitivity: null
+    min_evaluated_neighbours: 0
+    min_acceptable_neighbour_fraction: 0.0
+    required_fold_count: 3
+  ranking_order:
+    - descending positive DEVELOPMENT fold fraction
+    - descending acceptable evaluated-neighbour fraction
+    - ascending maximum absolute yearly concentration (missing last)
+    - ascending execution perturbation sensitivity (missing last)
+    - descending worst-fold net expectancy
+    - descending cost-stressed pooled expectancy
+    - descending pooled net expectancy
+    - ascending maximum drawdown
+    - ascending deterministic trial_id tie-breaker
+  weighted_score: false
+
+search:
+  mode: exact_grid
+  seed: 0
+  optuna: false
+  parameter_grid_frozen_before_returns: true
+  enlargement_after_results: forbidden
+  experiment_interpretation: one_declared_family_experiment_with_90_cells
+  deflated_sharpe_ratio: not_implemented_extension_point
+  probability_of_backtest_overfitting: not_implemented_extension_point
+
+sealed_partitions:
+  validation: locked_until_one_development_candidate_is_frozen
+  final_holdout: locked
+  strategy_returns_accessed: false
+
+reuse:
+  raw_target_enum: ftmoquant.strategies.ts_momentum.RawDirectionalTarget
+  causal_target_hold_semantics: adapted_from_ts_momentum_v1
+  derived_bar_pair: ftmoquant.strategies.trend_pullback.CompletedPair
+  volatility_dependency: numpy
+  parallel_execution_engine: false
+
+semantic_sha256: 6f2cdf187e40e9bc9c065c7e7befa16f89d1fe380c8626ab853474658466f116
