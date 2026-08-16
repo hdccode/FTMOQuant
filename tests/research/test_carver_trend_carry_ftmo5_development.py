@@ -243,6 +243,85 @@ def test_signal_and_proxy_volatility_are_causal_after_warmup() -> None:
     )
 
 
+@pytest.mark.parametrize(
+    "values",
+    [
+        [-2.0, -1.0, 0.0, 1.0],
+        [0.0, 1.0, 2.0, 3.0],
+        [-4.0, -3.0, -2.0, -1.0],
+    ],
+)
+def test_adjusted_price_validator_accepts_negative_and_zero_values(
+    values: list[float],
+) -> None:
+    series = pd.Series(
+        values,
+        index=pd.date_range("2020-01-01", periods=len(values), freq="D"),
+    )
+    carver._price_series(series)
+
+
+def test_adjusted_price_validator_still_rejects_unordered_and_duplicate_indexes() -> (
+    None
+):
+    unordered = pd.Series(
+        [1.0, -1.0],
+        index=pd.DatetimeIndex(["2020-01-02", "2020-01-01"]),
+    )
+    duplicate = pd.Series(
+        [0.0, -1.0],
+        index=pd.DatetimeIndex(["2020-01-01", "2020-01-01"]),
+    )
+    with pytest.raises(CarverTrendCarryFtmo5EvaluationError, match="not causal"):
+        carver._price_series(unordered)
+    with pytest.raises(CarverTrendCarryFtmo5EvaluationError, match="not causal"):
+        carver._price_series(duplicate)
+
+
+def test_historical_nans_remain_causal_without_backfill_or_future_leakage() -> None:
+    index = pd.date_range("2010-01-01", periods=400, freq="D", tz="UTC")
+    adjusted = pd.Series(
+        [float(item - 200) for item in range(400)], index=index, dtype=float
+    )
+    adjusted.iloc[:8] = float("nan")
+    adjusted.iloc[75:78] = float("nan")
+    multiple = pd.DataFrame(
+        {
+            "CARRY": adjusted + 2.0,
+            "CARRY_CONTRACT": 202409,
+            "PRICE": adjusted,
+            "PRICE_CONTRACT": 202406,
+            "FORWARD": adjusted + 1.0,
+            "FORWARD_CONTRACT": 202412,
+        },
+        index=index,
+    )
+    original = combine_forecasts(adjusted, multiple)
+
+    changed_adjusted = adjusted.copy()
+    changed_multiple = multiple.copy()
+    changed_adjusted.iloc[300:] = changed_adjusted.iloc[300:] * 100.0
+    for column in ("PRICE", "CARRY"):
+        changed_multiple.loc[index[300] :, column] = (
+            changed_multiple.loc[index[300] :, column] * 100.0
+        )
+    changed = combine_forecasts(changed_adjusted, changed_multiple)
+    pd.testing.assert_series_equal(
+        original.combined.loc[: index[299]], changed.combined.loc[: index[299]]
+    )
+
+    volatility = pinned_mixed_daily_price_volatility(adjusted)
+    short = adjusted.diff().ewm(adjust=True, span=35, min_periods=10).std()
+    slow = short.ewm(span=20 * 256, adjust=True).mean()
+    expected = (
+        (slow * 0.35 + short * 0.65)
+        .where((slow * 0.35 + short * 0.65) >= 1e-10, 1e-10)
+        .ffill()
+    )
+    pd.testing.assert_series_equal(volatility, expected)
+    assert (volatility.iloc[:18] == 1e-10).all()
+
+
 def test_complete_synthetic_fold_uses_strict_later_bid_ask_g08_and_sparse_rows() -> (
     None
 ):

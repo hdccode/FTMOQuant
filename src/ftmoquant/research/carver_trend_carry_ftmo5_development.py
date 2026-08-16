@@ -1443,11 +1443,7 @@ def main(argv: Sequence[str] | None = None) -> None:
 
 
 def _price_series(value: pd.Series) -> None:
-    if (
-        not value.index.is_monotonic_increasing
-        or value.index.has_duplicates
-        or (value <= 0).any()
-    ):
+    if not value.index.is_monotonic_increasing or value.index.has_duplicates:
         raise CarverTrendCarryFtmo5EvaluationError(
             "adjusted futures price series is not causal/valid"
         )
