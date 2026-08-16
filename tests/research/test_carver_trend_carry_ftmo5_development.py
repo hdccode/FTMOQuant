@@ -1,3 +1,4 @@
+import json
 from copy import deepcopy
 from dataclasses import replace
 from datetime import UTC, datetime, timedelta
@@ -243,6 +244,41 @@ def test_signal_and_proxy_volatility_are_causal_after_warmup() -> None:
     )
 
 
+def test_proxy_volatility_preserves_causal_warmup_and_floors_finite_zero() -> None:
+    index = pd.date_range("2019-03-11", periods=20, freq="D", tz="UTC")
+    price = pd.Series(range(20), index=index, dtype=float)
+    volatility = pinned_mixed_daily_price_volatility(price)
+
+    assert volatility.iloc[:10].isna().all()
+    assert volatility.first_valid_index() == index[10]
+    assert volatility.iloc[10] == 1e-10
+    assert not (volatility.iloc[:10] == 1e-10).any()
+    clipped = pd.Series([float("nan"), 0.0, 1e-12, 1.0]).clip(lower=1e-10)
+    assert pd.isna(clipped.iloc[0])
+    assert clipped.iloc[1:].tolist() == [1e-10, 1e-10, 1.0]
+
+
+def test_warmup_nan_cannot_create_a_march_12_style_desired_position() -> None:
+    index = pd.date_range("2019-03-11", periods=20, freq="D", tz="UTC")
+    price = pd.Series([float(item * item) for item in range(20)], index=index)
+    volatility = pinned_mixed_daily_price_volatility(price)
+    desired = build_desired_positions(
+        "SOYBN_USD.OANDA",
+        pd.Series(-8.5, index=index),
+        volatility,
+        load_g08_cfd_economics(),
+        load_carver_trend_carry_ftmo5_spec(),
+    )
+
+    assert volatility.loc[pd.Timestamp("2019-03-11T00:00:00Z")] != 1e-10
+    assert pd.isna(volatility.loc[pd.Timestamp("2019-03-11T00:00:00Z")])
+    assert all(
+        item.signal_timestamp_utc != datetime(2019, 3, 12, tzinfo=UTC)
+        for item in desired
+    )
+    assert desired[0].signal_timestamp_utc == datetime(2019, 3, 22, tzinfo=UTC)
+
+
 @pytest.mark.parametrize(
     "values",
     [
@@ -313,13 +349,9 @@ def test_historical_nans_remain_causal_without_backfill_or_future_leakage() -> N
     volatility = pinned_mixed_daily_price_volatility(adjusted)
     short = adjusted.diff().ewm(adjust=True, span=35, min_periods=10).std()
     slow = short.ewm(span=20 * 256, adjust=True).mean()
-    expected = (
-        (slow * 0.35 + short * 0.65)
-        .where((slow * 0.35 + short * 0.65) >= 1e-10, 1e-10)
-        .ffill()
-    )
+    expected = (slow * 0.35 + short * 0.65).clip(lower=1e-10).ffill()
     pd.testing.assert_series_equal(volatility, expected)
-    assert (volatility.iloc[:18] == 1e-10).all()
+    assert volatility.iloc[:18].isna().all()
 
 
 def test_complete_synthetic_fold_uses_strict_later_bid_ask_g08_and_sparse_rows() -> (
@@ -395,6 +427,79 @@ def test_sparse_observation_is_not_filled_and_margin_breach_fails_closed() -> No
         evaluate_synthetic_fold(
             SyntheticFoldInput("dev_fold_1", (too_large,), observations, start, end)
         )
+
+
+def test_aggregate_margin_diagnostics_do_not_change_the_frozen_decision() -> None:
+    economics = load_g08_cfd_economics()
+    timestamp = datetime(2020, 4, 13, 14, 1, tzinfo=UTC)
+    observation = ExecutionObservation(
+        timestamp - timedelta(minutes=1),
+        timestamp,
+        Decimal("1500"),
+        Decimal("1500"),
+    )
+    desired = DesiredPosition(
+        "XAU_USD.OANDA",
+        timestamp - timedelta(minutes=1),
+        Decimal("10"),
+        Decimal("1"),
+        Decimal("1"),
+    )
+    exact_capital_states = {
+        instrument: carver._InstrumentState() for instrument in carver._MAPPING
+    }
+    transition = carver._execute_transition(
+        desired,
+        observation,
+        exact_capital_states,
+        economics,
+        Decimal("10000"),
+    )
+    assert transition is not None
+
+    breached_states = {
+        instrument: carver._InstrumentState() for instrument in carver._MAPPING
+    }
+    breached_states["EUR/USD.DUKASCOPY"] = carver._InstrumentState(
+        lots=Decimal("1"), last_mid=Decimal("1.2")
+    )
+    with pytest.raises(CarverTrendCarryFtmo5EvaluationError) as captured:
+        carver._execute_transition(
+            desired,
+            observation,
+            breached_states,
+            economics,
+            Decimal("10000"),
+        )
+    prefix = "aggregate frozen G0.8 swing margin exceeds research capital: "
+    assert str(captured.value).startswith(prefix)
+    diagnostics = json.loads(str(captured.value).removeprefix(prefix))
+    assert diagnostics == {
+        "aggregate_margin": "14000.0",
+        "aggregate_margin_to_capital_ratio": "1.4",
+        "execution_timestamp_utc": "2020-04-13T14:01:00Z",
+        "nonzero_proposed_positions": [
+            {
+                "causal_margin_price": "1.2",
+                "contract_size": "100000",
+                "desired_lots": "1",
+                "instrument": "EUR/USD.DUKASCOPY",
+                "margin_requirement": "4000.0",
+                "swing_leverage": "30",
+            },
+            {
+                "causal_margin_price": "1500",
+                "contract_size": "100",
+                "desired_lots": "1",
+                "instrument": "XAU_USD.OANDA",
+                "margin_requirement": "10000",
+                "swing_leverage": "15",
+            },
+        ],
+        "research_capital": "10000",
+        "signal_timestamp_utc": "2020-04-13T14:00:00Z",
+        "transition_instrument": "XAU_USD.OANDA",
+    }
 
 
 def test_fold_scores_only_comparison_after_independent_warmup() -> None:

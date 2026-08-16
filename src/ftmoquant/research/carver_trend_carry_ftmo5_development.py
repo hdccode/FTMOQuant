@@ -194,8 +194,7 @@ def pinned_mixed_daily_price_volatility(price: pd.Series) -> pd.Series:
     _price_series(price)
     short = price.diff().ewm(adjust=True, span=35, min_periods=10).std()
     slow = short.ewm(span=20 * 256, adjust=True).mean()
-    mixed = slow * 0.35 + short * 0.65
-    mixed = mixed.where(mixed >= 1e-10, 1e-10)
+    mixed = (slow * 0.35 + short * 0.65).clip(lower=1e-10)
     return mixed.ffill()
 
 
@@ -1193,6 +1192,7 @@ def _execute_transition(
     proposed = {key: item.lots for key, item in states.items()}
     proposed[instrument] = desired.desired_lots
     margin = Decimal(0)
+    margin_details: list[dict[str, str]] = []
     for key, lots in proposed.items():
         if lots == 0:
             continue
@@ -1201,12 +1201,36 @@ def _execute_transition(
             raise CarverTrendCarryFtmo5EvaluationError(
                 f"margin calculation lacks causal mark: {key}"
             )
-        margin += economics.margin_requirement(
-            _economics_symbol(key), latest, abs(lots)
+        margin_contract = economics.contract(_economics_symbol(key))
+        individual_margin = economics.margin_requirement(
+            margin_contract.symbol, latest, abs(lots)
+        )
+        margin += individual_margin
+        margin_details.append(
+            {
+                "instrument": key,
+                "desired_lots": str(lots),
+                "causal_margin_price": str(latest),
+                "contract_size": str(margin_contract.contract_size),
+                "swing_leverage": str(margin_contract.swing_leverage),
+                "margin_requirement": str(individual_margin),
+            }
         )
     if margin > capital:
+        diagnostics = {
+            "signal_timestamp_utc": _utc(desired.signal_timestamp_utc),
+            "execution_timestamp_utc": _utc(observation.available_at_utc),
+            "transition_instrument": instrument,
+            "nonzero_proposed_positions": margin_details,
+            "aggregate_margin": str(margin),
+            "research_capital": str(capital),
+            "aggregate_margin_to_capital_ratio": (
+                str(margin / capital) if capital != 0 else "Infinity"
+            ),
+        }
         raise CarverTrendCarryFtmo5EvaluationError(
-            "aggregate frozen G0.8 swing margin exceeds research capital"
+            "aggregate frozen G0.8 swing margin exceeds research capital: "
+            + json.dumps(diagnostics, sort_keys=True, separators=(",", ":"))
         )
     fill = ask if delta > 0 else bid
     spread_cost = abs(delta) * contract.contract_size * abs(fill - mid)
