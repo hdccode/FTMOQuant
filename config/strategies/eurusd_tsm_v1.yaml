@@ -153,6 +153,44 @@ eligibility:
   plateau_hard_gate: false
   year_concentration_hard_gate: false
 
+sample_count:
+  fold_metrics_trade_count: executed_raw_alpha_transitions
+  raw_states: [SHORT, FLAT, LONG]
+  scheduled_refresh_count: false
+  ewma_volatility_update_count: false
+  scaled_quantity_rebalance_count: false
+  native_order_or_fill_count: false
+  reversal_count: one_transition
+  unexecuted_target_change_count: false
+  pending_target_counts_when_first_expressed_before_supersession: true
+  risk_only_rebalances_count: false
+  turnover_includes_all_scaled_executed_quantity_changes: true
+  costs_and_pnl_include_all_scaled_rebalances: true
+
+production_evaluator:
+  version: eurusd-tsm-v1-development-evaluator-1
+  module: ftmoquant.research.eurusd_tsm_development
+  trial_evaluator: ftmoquant.research.eurusd_tsm_development.EurusdTsmTrialEvaluator
+  runner: ftmoquant.research.eurusd_tsm_development.run_eurusd_tsm_development
+  command: uv run python -m ftmoquant.research.eurusd_tsm_development
+  generic_search_engine: ftmoquant.research.g1.search.run_search
+  fold_warmup: process_train_start_through_evaluation_without_training_orders
+  evaluation_order_window: decision_information_time_in_evaluation_half_open_interval
+  end_boundary: final_available_tradable_observation_strictly_before_evaluate_end
+  read_beyond_evaluate_end: false
+
+metric_definitions:
+  trade_count: executed_raw_alpha_transitions
+  turnover: total_absolute_executed_base_unit_change_divided_by_100000
+  net_expectancy: total_fold_net_return_divided_by_trade_count_zero_if_no_transitions
+  cost_stressed_expectancy: stressed_fold_net_return_divided_by_trade_count_zero_if_no_transitions
+  cost_stress: base_net_return_minus_half_realized_base_variable_cost
+  net_daily_mean: arithmetic_mean_of_causal_evaluation_daily_net_returns
+  sharpe: existing_ftmoquant_annualized_daily_sharpe_sqrt_252
+  drawdown: existing_ftmoquant_compounded_daily_return_maximum_drawdown
+  yearly_attribution: calendar_year_net_return_contribution
+  execution_perturbed_expectancy: null
+
 neighbours:
   same_timeframe_required: true
   exactly_one_dimension_moves: true
@@ -217,5 +255,16 @@ preregistration_amendments:
     validation_accessed: false
     final_holdout_accessed: false
     scope: risk_normalization_only
+  - amendment_id: production_evaluator_and_sample_count_pre_data_2026_08_16
+    superseded_semantic_sha256: 0a5411f003dba15d88b8f2ad7368ad9d25cc16a5474108879eb012658c670a98
+    reason_superseded: missing_production_trial_evaluator_and_ambiguous_sample_count
+    amendment_date: "2026-08-16"
+    repository_commit_before_amendment: 0cd2c8506b4850b385c8a073c267f7b6772d2659
+    observed_development_trial_results: 0
+    observed_development_fold_results: 0
+    historical_development_strategy_returns_accessed: false
+    validation_accessed: false
+    final_holdout_accessed: false
+    scope: evaluator_runner_and_sample_count_clarification
 
-semantic_sha256: 0a5411f003dba15d88b8f2ad7368ad9d25cc16a5474108879eb012658c670a98
+semantic_sha256: a8988d0fa24378c2036629fb9ae0dbf9c1fdf5564abdaa0c4ba03633372e251e

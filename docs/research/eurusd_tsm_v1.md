@@ -3,7 +3,7 @@
 Status: `preregistered_not_run`. The authoritative machine-readable protocol is
 [`config/strategies/eurusd_tsm_v1.yaml`](../../config/strategies/eurusd_tsm_v1.yaml),
 with semantic SHA-256
-`0a5411f003dba15d88b8f2ad7368ad9d25cc16a5474108879eb012658c670a98`.
+`a8988d0fa24378c2036629fb9ae0dbf9c1fdf5564abdaa0c4ba03633372e251e`.
 No historical strategy return was calculated while creating this protocol.
 
 ## Pre-data amendment record
@@ -22,6 +22,16 @@ The amendment changes only common G1 risk normalization. It does not change the
 alpha signal, grid, folds, sample threshold, costs, eligibility, selector, or
 neighbours. The resulting amended SHA is
 `0a5411f003dba15d88b8f2ad7368ad9d25cc16a5474108879eb012658c670a98`.
+
+A second pre-data amendment superseded that SHA at repository commit
+`0cd2c8506b4850b385c8a073c267f7b6772d2659`. The generic G1 engine required a
+caller-supplied production evaluator, none yet existed for this family, and the
+sample threshold did not distinguish alpha-state transitions from volatility
+resizing. Again, zero DEVELOPMENT trials, fold results, or historical strategy
+returns had been exposed; validation and final holdout remained untouched. The
+amendment adds only the evaluator/runner, exact metrics, end-boundary rule, and
+sample-count clarification. The resulting semantic SHA is
+`a8988d0fa24378c2036629fb9ae0dbf9c1fdf5564abdaa0c4ba03633372e251e`.
 
 ## Hypothesis and reuse
 
@@ -128,7 +138,7 @@ pass-probability, or funded-account rule.
 ## Eligibility and selection
 
 A cell must complete all three required folds, have at least 100 pooled executed
-target transitions, have positive pooled net expectancy, remain positive under
+raw alpha transitions, have positive pooled net expectancy, remain positive under
 1.5× cost, have at least two positive folds, and pass numerical validity checks.
 The sample threshold reuses the existing preregistered trend-pullback
 DEVELOPMENT minimum. Maximum drawdown, year concentration, and plateau quality
@@ -150,6 +160,36 @@ lexicographically by:
 No weighted score or maximum-Sharpe selection is used. Neighbours have the same
 timeframe and differ by one adjacent step in exactly one of lookback, deadband,
 or refresh interval. H1 and H4 cells are never neighbours.
+
+`FoldMetrics.trade_count` is specifically the number of executed raw state
+changes among SHORT, FLAT, and LONG. A reversal counts once. A changed raw state
+counts only upon the first native position-changing fill that expresses it; an
+unexecutable state counts later if it becomes executable before supersession,
+and never counts if superseded first. Scheduled refreshes, EWMA updates, native
+orders/fills, and risk-only resizes or flattens with unchanged raw state do not
+increase the count. All actual scaled fills still contribute to turnover,
+costs, and P&L.
+
+The production evaluator is
+`ftmoquant.research.eurusd_tsm_development.EurusdTsmTrialEvaluator`. It warms
+signal and causal risk state from each fold's `train_start`, starts a fresh
+native account and counted P&L at `evaluate_start`, and accepts only decisions
+inside the evaluation half-open interval. Remaining exposure is liquidated on
+the final synchronized tradable observation strictly before the exclusive fold
+endpoint. The future exact-grid command is:
+
+```console
+uv run python -m ftmoquant.research.eurusd_tsm_development \
+  --universe-readiness PATH \
+  --development-root INSTRUMENT_ID=PATH ... \
+  --evaluation-config PATH \
+  --output PATH
+```
+
+It writes the complete registry (fold metrics, gate decisions, plateau results,
+and selection trace), family verdict, optional selected candidate, deterministic
+artifact hashes, and separate runtime provenance. It rejects sealed paths and
+never invokes validation.
 
 If no cell survives in the future DEVELOPMENT run, the outcome is
 `ALPHA_REJECTED`. Otherwise exactly one mechanically selected configuration is

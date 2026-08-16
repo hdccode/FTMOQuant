@@ -99,6 +99,28 @@ def test_pre_data_normalization_amendment_is_frozen_without_alpha_drift() -> Non
     assert amendment["historical_development_strategy_returns_accessed"] is False
 
 
+def test_pre_data_evaluator_and_sample_count_amendment_is_frozen() -> None:
+    document = load_eurusd_tsm_spec().canonical_document
+    sample = document["sample_count"]
+    evaluator = document["production_evaluator"]
+    amendment = document["preregistration_amendments"][1]
+
+    assert sample["fold_metrics_trade_count"] == "executed_raw_alpha_transitions"
+    assert sample["risk_only_rebalances_count"] is False
+    assert sample["reversal_count"] == "one_transition"
+    assert sample["unexecuted_target_change_count"] is False
+    assert sample["turnover_includes_all_scaled_executed_quantity_changes"] is True
+    assert sample["costs_and_pnl_include_all_scaled_rebalances"] is True
+    assert evaluator["module"] == "ftmoquant.research.eurusd_tsm_development"
+    assert amendment["superseded_semantic_sha256"] == (
+        "0a5411f003dba15d88b8f2ad7368ad9d25cc16a5474108879eb012658c670a98"
+    )
+    assert amendment["observed_development_trial_results"] == 0
+    assert amendment["observed_development_fold_results"] == 0
+    assert amendment["validation_accessed"] is False
+    assert amendment["final_holdout_accessed"] is False
+
+
 def test_existing_three_development_folds_are_frozen_exactly() -> None:
     folds = frozen_development_folds()
     declared = load_eurusd_tsm_spec().canonical_document["development_folds"]

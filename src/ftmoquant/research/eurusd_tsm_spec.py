@@ -23,7 +23,7 @@ from ftmoquant.research.stage_g import (
 
 EURUSD_TSM_SPEC_PATH = Path("config/strategies/eurusd_tsm_v1.yaml")
 EURUSD_TSM_SEMANTIC_SHA256 = (
-    "0a5411f003dba15d88b8f2ad7368ad9d25cc16a5474108879eb012658c670a98"
+    "a8988d0fa24378c2036629fb9ae0dbf9c1fdf5564abdaa0c4ba03633372e251e"
 )
 
 
@@ -103,6 +103,9 @@ def load_eurusd_tsm_spec(path: Path = EURUSD_TSM_SPEC_PATH) -> EurusdTsmSpec:
             "execution_and_costs",
             "development_folds",
             "eligibility",
+            "sample_count",
+            "production_evaluator",
+            "metric_definitions",
             "neighbours",
             "selector",
             "search",
@@ -191,6 +194,7 @@ def load_eurusd_tsm_spec(path: Path = EURUSD_TSM_SPEC_PATH) -> EurusdTsmSpec:
     _validate_signal(document)
     _validate_risk_execution(document)
     _validate_folds(document)
+    _validate_evaluator_sample_metrics(document)
     _validate_selection_and_seals(document)
     return EurusdTsmSpec(
         family_id="eurusd_tsm_v1",
@@ -381,10 +385,69 @@ def _validate_selection_and_seals(document: dict[str, Any]) -> None:
                 "validation_accessed": False,
                 "final_holdout_accessed": False,
                 "scope": "risk_normalization_only",
-            }
+            },
+            {
+                "amendment_id": (
+                    "production_evaluator_and_sample_count_pre_data_2026_08_16"
+                ),
+                "superseded_semantic_sha256": (
+                    "0a5411f003dba15d88b8f2ad7368ad9d25cc16a5474108879eb012658c670a98"
+                ),
+                "reason_superseded": (
+                    "missing_production_trial_evaluator_and_ambiguous_sample_count"
+                ),
+                "amendment_date": "2026-08-16",
+                "repository_commit_before_amendment": (
+                    "0cd2c8506b4850b385c8a073c267f7b6772d2659"
+                ),
+                "observed_development_trial_results": 0,
+                "observed_development_fold_results": 0,
+                "historical_development_strategy_returns_accessed": False,
+                "validation_accessed": False,
+                "final_holdout_accessed": False,
+                "scope": "evaluator_runner_and_sample_count_clarification",
+            },
         ]
     ):
         raise EurusdTsmSpecError("eligibility, selector, search, or seals drifted")
+
+
+def _validate_evaluator_sample_metrics(document: dict[str, Any]) -> None:
+    sample = _mapping(document["sample_count"], "sample_count")
+    evaluator = _mapping(document["production_evaluator"], "production_evaluator")
+    metrics = _mapping(document["metric_definitions"], "metric_definitions")
+    if (
+        sample.get("fold_metrics_trade_count")
+        != "executed_raw_alpha_transitions"
+        or sample.get("raw_states") != ["SHORT", "FLAT", "LONG"]
+        or sample.get("scheduled_refresh_count") is not False
+        or sample.get("ewma_volatility_update_count") is not False
+        or sample.get("scaled_quantity_rebalance_count") is not False
+        or sample.get("native_order_or_fill_count") is not False
+        or sample.get("reversal_count") != "one_transition"
+        or sample.get("unexecuted_target_change_count") is not False
+        or sample.get(
+            "pending_target_counts_when_first_expressed_before_supersession"
+        )
+        is not True
+        or sample.get("risk_only_rebalances_count") is not False
+        or sample.get("turnover_includes_all_scaled_executed_quantity_changes")
+        is not True
+        or sample.get("costs_and_pnl_include_all_scaled_rebalances") is not True
+        or evaluator.get("version") != "eurusd-tsm-v1-development-evaluator-1"
+        or evaluator.get("module")
+        != "ftmoquant.research.eurusd_tsm_development"
+        or evaluator.get("generic_search_engine")
+        != "ftmoquant.research.g1.search.run_search"
+        or evaluator.get("end_boundary")
+        != "final_available_tradable_observation_strictly_before_evaluate_end"
+        or evaluator.get("read_beyond_evaluate_end") is not False
+        or metrics.get("trade_count") != "executed_raw_alpha_transitions"
+        or metrics.get("execution_perturbed_expectancy") is not None
+    ):
+        raise EurusdTsmSpecError(
+            "sample count, production evaluator, or metric definitions drifted"
+        )
 
 
 def _timeframe_grids(value: object) -> tuple[TsmTimeframeGrid, ...]:
