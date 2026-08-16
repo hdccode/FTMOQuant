@@ -77,7 +77,7 @@ def test_strict_later_fold_warmup_and_cost_stress() -> None:
     assert stressed_cost(0.01) == (0.01, 0.015)
     assert (
         CARVER_TREND_CARRY_FTMO5_CONFIG_SHA256
-        == "42578883ae9a6dbe41c9bc4ab98495e0935a200d2bc0282ab28ae05e45c0608b"
+        == "82cbf0e0396a5e74a0714d9eb46ed7af92ccaf762820b86e067f19b546b2ec3c"
     )
 
 
@@ -85,10 +85,10 @@ def test_all_five_g08_mappings_pnl_commission_margin_and_sessions() -> None:
     economics = load_g08_cfd_economics()
     mappings = {
         "EUR/USD.DUKASCOPY": "EUR/USD",
-        "XAU/USD.DUKASCOPY": "XAU/USD",
-        "USA500.DUKASCOPY": "US500.cash",
-        "LIGHT.CMD/USD.DUKASCOPY": "USOIL.cash",
-        "SOYBEAN.CMD/USX.DUKASCOPY": "SOYBEAN.c",
+        "XAU_USD.OANDA": "XAU/USD",
+        "SPX500_USD.OANDA": "US500.cash",
+        "WTICO_USD.OANDA": "USOIL.cash",
+        "SOYBN_USD.OANDA": "SOYBEAN.c",
     }
     assert set(mappings) == set(carver._MAPPING)
     assert cfd_net_pnl(
@@ -96,18 +96,18 @@ def test_all_five_g08_mappings_pnl_commission_margin_and_sessions() -> None:
     ) == Decimal("995.000")
     assert cfd_net_pnl(
         economics,
-        "XAU/USD.DUKASCOPY",
+        "XAU_USD.OANDA",
         1,
         Decimal("2000"),
         Decimal("2010"),
         Decimal("1"),
     ) == Decimal("997.193000")
     assert cfd_net_pnl(
-        economics, "USA500.DUKASCOPY", 1, Decimal("5000"), Decimal("5010"), Decimal("1")
+        economics, "SPX500_USD.OANDA", 1, Decimal("5000"), Decimal("5010"), Decimal("1")
     ) == Decimal("10")
     assert cfd_net_pnl(
         economics,
-        "LIGHT.CMD/USD.DUKASCOPY",
+        "WTICO_USD.OANDA",
         1,
         Decimal("70"),
         Decimal("71"),
@@ -115,20 +115,20 @@ def test_all_five_g08_mappings_pnl_commission_margin_and_sessions() -> None:
     ) == Decimal("100")
     assert cfd_net_pnl(
         economics,
-        "SOYBEAN.CMD/USX.DUKASCOPY",
+        "SOYBN_USD.OANDA",
         1,
         Decimal("1200"),
         Decimal("1210"),
         Decimal("1"),
     ) == Decimal("10")
     assert cfd_margin_requirement(
-        economics, "USA500.DUKASCOPY", Decimal("5000"), Decimal("1")
+        economics, "SPX500_USD.OANDA", Decimal("5000"), Decimal("1")
     ) == Decimal("333.3333333333333333333333333")
     signal = datetime(2026, 7, 6, 13, 0, tzinfo=UTC)
     assert first_eligible_cfd_execution(
         signal,
         (signal, datetime(2026, 7, 6, 14, 40, tzinfo=UTC)),
-        "SOYBEAN.CMD/USX.DUKASCOPY",
+        "SOYBN_USD.OANDA",
         economics,
     ) == datetime(2026, 7, 6, 14, 40, tzinfo=UTC)
 

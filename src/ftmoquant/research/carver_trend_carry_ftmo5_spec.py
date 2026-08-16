@@ -21,7 +21,7 @@ CARVER_TREND_CARRY_FTMO5_SPEC_PATH = Path(
     "config/strategies/carver_trend_carry_ftmo5_v1.yaml"
 )
 CARVER_TREND_CARRY_FTMO5_CONFIG_SHA256 = (
-    "42578883ae9a6dbe41c9bc4ab98495e0935a200d2bc0282ab28ae05e45c0608b"
+    "82cbf0e0396a5e74a0714d9eb46ed7af92ccaf762820b86e067f19b546b2ec3c"
 )
 
 
@@ -109,14 +109,37 @@ def _validate(document: dict[str, Any]) -> None:
             "source SHA-256 manifest is invalid"
         )
     universe = _mapping(document["universe"], "universe")
-    if universe.get("futures_to_execution") != {
-        "EUR": "EUR/USD.DUKASCOPY",
-        "GOLD": "XAU/USD.DUKASCOPY",
-        "SP500": "USA500.DUKASCOPY",
-        "CRUDE_W": "LIGHT.CMD/USD.DUKASCOPY",
-        "SOYBEAN": "SOYBEAN.CMD/USX.DUKASCOPY",
+    if universe != {
+        "futures_to_execution": {
+            "EUR": "EUR/USD.DUKASCOPY",
+            "GOLD": "XAU_USD.OANDA",
+            "SP500": "SPX500_USD.OANDA",
+            "CRUDE_W": "WTICO_USD.OANDA",
+            "SOYBEAN": "SOYBN_USD.OANDA",
+        },
+        "futures_role": "signal_data_only",
+        "execution_price_proxy_providers": {
+            "EUR": "Dukascopy",
+            "GOLD": "OANDA_v20_practice",
+            "SP500": "OANDA_v20_practice",
+            "CRUDE_W": "OANDA_v20_practice",
+            "SOYBEAN": "OANDA_v20_practice",
+        },
+        "execution_price_proxy_provider_metadata": {
+            "OANDA_v20_practice_confirmed_instruments": [
+                "XAU_USD",
+                "SPX500_USD",
+                "WTICO_USD",
+                "SOYBN_USD",
+            ],
+        },
+        "execution_role": "numeric_BID_ASK_execution_price_proxy_only",
+        "execution_economics_role": "frozen_FTMO_G0_8_only",
+        "basis_mismatch": "explicit_report_required_no_favorable_basis_assumption",
     }:
-        raise CarverTrendCarryFtmo5SpecValidationError("futures/CFD mapping drifted")
+        raise CarverTrendCarryFtmo5SpecValidationError(
+            "execution-price provider mapping drifted"
+        )
     trend = _mapping(document["trend"], "trend")
     if (
         trend.get("rules")

@@ -28,10 +28,10 @@ from ftmoquant.research.stage_g import frozen_development_folds
 EVALUATOR_VERSION = "g1.4g-carver-trend-carry-ftmo5-development-1"
 _MAPPING = {
     "EUR/USD.DUKASCOPY": "EUR/USD",
-    "XAU/USD.DUKASCOPY": "XAU/USD",
-    "USA500.DUKASCOPY": "US500.cash",
-    "LIGHT.CMD/USD.DUKASCOPY": "USOIL.cash",
-    "SOYBEAN.CMD/USX.DUKASCOPY": "SOYBEAN.c",
+    "XAU_USD.OANDA": "XAU/USD",
+    "SPX500_USD.OANDA": "US500.cash",
+    "WTICO_USD.OANDA": "USOIL.cash",
+    "SOYBN_USD.OANDA": "SOYBEAN.c",
 }
 
 

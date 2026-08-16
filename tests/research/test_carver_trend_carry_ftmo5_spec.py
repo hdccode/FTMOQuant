@@ -17,6 +17,26 @@ def test_frozen_carver_spec_semantic_sha() -> None:
     spec = load_carver_trend_carry_ftmo5_spec()
     assert spec.candidate_id == "carver_trend_carry_ftmo5_v1"
     assert spec.semantic_sha256 == CARVER_TREND_CARRY_FTMO5_CONFIG_SHA256
+    assert spec.canonical_document["universe"]["futures_to_execution"] == {
+        "EUR": "EUR/USD.DUKASCOPY",
+        "GOLD": "XAU_USD.OANDA",
+        "SP500": "SPX500_USD.OANDA",
+        "CRUDE_W": "WTICO_USD.OANDA",
+        "SOYBEAN": "SOYBN_USD.OANDA",
+    }
+    assert spec.canonical_document["universe"]["execution_economics_role"] == (
+        "frozen_FTMO_G0_8_only"
+    )
+    assert spec.canonical_document["universe"][
+        "execution_price_proxy_provider_metadata"
+    ] == {
+        "OANDA_v20_practice_confirmed_instruments": [
+            "XAU_USD",
+            "SPX500_USD",
+            "WTICO_USD",
+            "SOYBN_USD",
+        ]
+    }
 
 
 @pytest.mark.parametrize(
