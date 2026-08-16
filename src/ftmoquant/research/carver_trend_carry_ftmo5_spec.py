@@ -21,7 +21,7 @@ CARVER_TREND_CARRY_FTMO5_SPEC_PATH = Path(
     "config/strategies/carver_trend_carry_ftmo5_v1.yaml"
 )
 CARVER_TREND_CARRY_FTMO5_CONFIG_SHA256 = (
-    "82cbf0e0396a5e74a0714d9eb46ed7af92ccaf762820b86e067f19b546b2ec3c"
+    "489b53abff19e041afda9cc5ba210a67252bf89dea87c8b9994f08c4422e210d"
 )
 
 
@@ -133,6 +133,7 @@ def _validate(document: dict[str, Any]) -> None:
                 "SOYBN_USD",
             ],
         },
+        "execution_price_scale_to_ftmo": {"SOYBN_USD.OANDA": 100},
         "execution_role": "numeric_BID_ASK_execution_price_proxy_only",
         "execution_economics_role": "frozen_FTMO_G0_8_only",
         "basis_mismatch": "explicit_report_required_no_favorable_basis_assumption",

@@ -37,6 +37,9 @@ def test_frozen_carver_spec_semantic_sha() -> None:
             "SOYBN_USD",
         ]
     }
+    assert spec.canonical_document["universe"]["execution_price_scale_to_ftmo"] == {
+        "SOYBN_USD.OANDA": 100
+    }
 
 
 @pytest.mark.parametrize(

@@ -19,6 +19,7 @@ from ftmoquant.research.carver_trend_carry_ftmo5_development import (
     comparison_fold,
     first_eligible_cfd_execution,
     first_strictly_later_execution,
+    normalize_execution_price,
     stressed_cost,
     verify_reference_sources,
 )
@@ -77,7 +78,7 @@ def test_strict_later_fold_warmup_and_cost_stress() -> None:
     assert stressed_cost(0.01) == (0.01, 0.015)
     assert (
         CARVER_TREND_CARRY_FTMO5_CONFIG_SHA256
-        == "82cbf0e0396a5e74a0714d9eb46ed7af92ccaf762820b86e067f19b546b2ec3c"
+        == "489b53abff19e041afda9cc5ba210a67252bf89dea87c8b9994f08c4422e210d"
     )
 
 
@@ -117,10 +118,19 @@ def test_all_five_g08_mappings_pnl_commission_margin_and_sessions() -> None:
         economics,
         "SOYBN_USD.OANDA",
         1,
-        Decimal("1200"),
-        Decimal("1210"),
+        Decimal("12"),
+        Decimal("12.1"),
         Decimal("1"),
     ) == Decimal("10")
+    assert normalize_execution_price("SOYBN_USD.OANDA", Decimal("15.2")) == Decimal(
+        "1520.0"
+    )
+    assert normalize_execution_price("XAU_USD.OANDA", Decimal("2000")) == Decimal(
+        "2000"
+    )
+    assert cfd_margin_requirement(
+        economics, "SOYBN_USD.OANDA", Decimal("12"), Decimal("1")
+    ) == Decimal("1200")
     assert cfd_margin_requirement(
         economics, "SPX500_USD.OANDA", Decimal("5000"), Decimal("1")
     ) == Decimal("333.3333333333333333333333333")

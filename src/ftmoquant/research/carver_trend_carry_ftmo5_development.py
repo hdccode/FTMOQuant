@@ -33,6 +33,7 @@ _MAPPING = {
     "WTICO_USD.OANDA": "USOIL.cash",
     "SOYBN_USD.OANDA": "SOYBEAN.c",
 }
+_EXECUTION_PRICE_SCALE_TO_FTMO = {"SOYBN_USD.OANDA": Decimal("100")}
 
 
 class CarverTrendCarryFtmo5EvaluationError(ValueError):
@@ -171,6 +172,8 @@ def cfd_net_pnl(
 ) -> Decimal:
     """Gross CFD P/L less independent entry/exit commissions; spread is observed."""
     symbol = _economics_symbol(execution_instrument)
+    entry = normalize_execution_price(execution_instrument, entry)
+    exit = normalize_execution_price(execution_instrument, exit)
     return (
         economics.gross_pnl(symbol, direction, entry, exit, lots)
         - economics.side_commission(symbol, entry, lots)
@@ -183,7 +186,21 @@ def cfd_margin_requirement(
 ) -> Decimal:
     """Use frozen swing margin without quantizing continuous research lots."""
     return economics.margin_requirement(
-        _economics_symbol(execution_instrument), price, lots
+        _economics_symbol(execution_instrument),
+        normalize_execution_price(execution_instrument, price),
+        lots,
+    )
+
+
+def normalize_execution_price(execution_instrument: str, raw_price: Decimal) -> Decimal:
+    """Convert the frozen provider price quote to the FTMO G0.8 economics scale."""
+    _economics_symbol(execution_instrument)
+    if raw_price <= 0:
+        raise CarverTrendCarryFtmo5EvaluationError(
+            "execution price must be positive"
+        )
+    return raw_price * _EXECUTION_PRICE_SCALE_TO_FTMO.get(
+        execution_instrument, Decimal("1")
     )
 
 

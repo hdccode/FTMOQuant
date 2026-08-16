@@ -36,3 +36,13 @@ OANDA v20 practice metadata confirmed those four instruments exist. EUR remains
 `EUR/USD.DUKASCOPY`. This changes only the four source identifiers;
 it does not import OANDA economics or alter trend, carry, weighting, FDM,
 portfolio, causality, cost-stress, folds, or the promotion gate.
+
+## Pre-evaluation SOYBN quote-scale normalization
+
+Before bulk DEVELOPMENT acquisition, the observed OANDA `SOYBN_USD` quote scale
+(approximately `15.2`) and live FTMO `SOYBEAN.c` quote scale (approximately
+`1180`) established a dollar-versus-cents difference. The frozen transformation
+is applied only to raw `SOYBN_USD.OANDA` BID/ASK prices: multiply each by `100`
+before G0.8 FTMO P&L or economics. No other execution proxy is rescaled, and
+this does not change G0.8 or any strategy, portfolio, cost, causality, fold, or
+promotion-gate semantics.

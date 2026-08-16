@@ -34,6 +34,8 @@ universe:
     SOYBEAN: OANDA_v20_practice
   execution_price_proxy_provider_metadata:
     OANDA_v20_practice_confirmed_instruments: [XAU_USD, SPX500_USD, WTICO_USD, SOYBN_USD]
+  execution_price_scale_to_ftmo:
+    SOYBN_USD.OANDA: 100
   execution_role: numeric_BID_ASK_execution_price_proxy_only
   execution_economics_role: frozen_FTMO_G0_8_only
   basis_mismatch: explicit_report_required_no_favorable_basis_assumption
