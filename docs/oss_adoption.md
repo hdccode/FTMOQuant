@@ -922,3 +922,40 @@ margin fail-closed rule, and separation of deterministic result content from
 wall-clock run metadata are explicitly new performance-blind preregistered
 conventions. No backtester, parameter optimizer, financing model, or data
 dependency was added.
+
+## Generic EUR/USD G1 alpha-research foundation audit
+
+This infrastructure-only audit was performed at the four commits below before
+the generic family/search modules were implemented. It inspected source and
+license files only. It did not open market data, calculate strategy returns,
+run a historical search, or access validation/final-holdout artifacts.
+
+| Repository | Exact commit / license | Files and functions inspected | Adoption status, local modifications, and tests |
+| --- | --- | --- | --- |
+| [Mohammed-AB/forex-strategy-lab](https://github.com/Mohammed-AB/forex-strategy-lab/tree/df34085afb615818038c0e8bedc5aad837883e5c) | `df34085afb615818038c0e8bedc5aad837883e5c`; MIT, copyright Mohammed Abumtary | `smart_backtester.py`: `SESSIONS`/`session_mask` (42–69), `STRATEGY_FUNCS` and `STRATEGY_PARAMS` (319–384), `suggest_params` (618–628), `make_objective` (631–689), `_get_unique_top_trials` (701–716), `rolling_walk_forward` (791 onward), reporting and `main`; `forex_backtester.py`: grid constants, `session_mask`, `run_train_sweep`, `walk_forward_validate`, and reporting. | **Adapted directly:** the small declaration-kind-to-`trial.suggest_categorical/int/float` dispatch in `suggest_params` became the typed `Parameter.suggest` implementations and `suggest_parameters` in `g1/parameter_space.py`. FTMOQuant adds exact-schema validation, steps/log bounds, canonical JSON, exact grid enumeration, and deterministic hashes. The copyright notice is in that module and the full license is preserved at `LICENSES/forex-strategy-lab-MIT.txt`. **Referenced/independently implemented:** family registry, bounded search, duplicate rejection, complete trial logging, explicit walk-forward config, and session-as-parameter architecture. Rejected unchanged: simulator/account rules, UTC-hour sessions, Sharpe, daily loss, arbitrary composite score, fixed split, and cross-pair rule. Tests in `tests/research/g1/test_parameter_space.py` and `test_search.py` validate adopted categorical/integer/float dispatch, deterministic seeded Optuna behavior, exact grids, duplicates, and complete status retention. |
+| [logiccrafterdz/Argus](https://github.com/logiccrafterdz/Argus/tree/a8ba7810432740e8bfc135cdbb94d843a7eaf131) | `a8ba7810432740e8bfc135cdbb94d843a7eaf131`; MIT, copyright LogicCrafterDz | `backtest/strategies/base_strategy.py` (`BaseStrategy`); `donchian_breakout.py`, `bollinger_mr.py`, `asian_range_fakeout.py`, `orb_session.py`, `liq_sweep.py`, `ny_session_reversal.py`, `adx_trend_strength.py`, and `avwap_confluence.py` (`__init__` and `prepare_data` in each); strategy package registry and indicator helpers. | **Reference library only in this task.** No Argus implementation or source text was copied. Its small base-class/family organization and the eight named signal hypotheses confirmed that future trend, breakout, session, mean-reversion, sweep, and confluence families fit the new signal-plus-parameter contract. Its pandas data preparation, execution assumptions, risk, and backtester were not adopted. Future adoption requires family-specific causality review and its own provenance/test entry. |
+| [gabrielee5/prop-firm-simulator](https://github.com/gabrielee5/prop-firm-simulator/tree/4341ec43354cabaf6456aabeef3905c6bc08b721) | `4341ec43354cabaf6456aabeef3905c6bc08b721`; MIT, copyright Gabriele Fabietti | `src/models.py`: `FirmConfig`, `TradingConfig`, `SimulationConfig`, `SingleRunResult`, `RRResult`, `ParameterPoint`, `UnifiedResult`, and `UnifiedConfig`; `src/simulator.py`: `simulate_single_run`, `run_monte_carlo`, `run_full_simulation`; `src/funded_simulator.py`: funded/withdrawal result models and simulation functions; `funded_analysis.py` and `unified_analysis.py` serialization/analysis entry points. | **G4 architecture reference only.** No code or model was copied. The separation of challenge runs, funded lifetime/withdrawals, parameter points, and unified results is recorded for later G4 work. G1 contains no pass probability, challenge loss rule, funded payout, risk/reward sweep, or FTMO sizing integration. |
+| [ranjeet867/Metatrader](https://github.com/ranjeet867/Metatrader/tree/c0af965f3881971ab3c65db9a2b862f70df17b78) | `c0af965f3881971ab3c65db9a2b862f70df17b78`; the exact checkout independently contains an MIT `LICENSE`, copyright 2026 `mt5_quant_trader_v2 contributors`, despite the prior GitHub no-license warning | `core/ftmo_simulator.py`: module contract (1–21), `StrategyDist`, `FtmoSimResult`, `simulate_pass_rate` (68–197), and OOS distribution loader; `scripts/ftmo_sim.py` bootstrap/reporting call path. | **Reference only.** No source text or implementation was copied even though the exact commit's local license file establishes MIT terms. The actual OOS R-multiple bootstrap, `P(pass)`, daily/total breach, no-resolution, per-strategy return/DD attribution, and challenge-path concepts remain parked for independently reviewed G4 implementation. Nothing from this repository is present in G1. |
+
+### Project-owned components reused
+
+- `ftmoquant.data.canonical_source`, `derived_bars`, the G0.5/G0.6 manifests,
+  and Stage G's frozen DEVELOPMENT context remain the EUR/USD data authority.
+- `ftmoquant.backtest.execution_harness` and Stage G per-instrument cost models
+  remain the G0.7 BID/ASK, spread, commission, latency, event-ordering, and
+  execution authority. No OSS execution simulator was imported.
+- `ftmoquant.research.stage_g` supplies the established DEVELOPMENT interval,
+  explicit fold pattern, and fail-closed partition precedent. The new G1 guard
+  generalizes the DEVELOPMENT start without exposing validation/holdout data.
+- `ftmoquant.research.statistics` remains the vetted `arch==8.0.0` bootstrap,
+  SPA/Reality Check, and MCS integration. DSR and PBO are artifact extension
+  markers only and are not claimed as implemented corrections.
+- Existing semantic SHA-256, canonical JSON, atomic artifact, and separate
+  runtime-provenance patterns were refactored into the generic trial artifact
+  path. Existing strategy evaluators were not replaced or rerun.
+
+The new dependency is `optuna>=4.5,<5` (resolved as `4.9.0`) and is used
+directly through its in-memory `TPESampler(seed=...)`, ask/tell, typed
+suggestion, and failed-trial APIs. FTMOQuant owns only the bounded family
+adapter, duplicate fail-closed rule, complete registry, and deterministic
+artifact schema around it.

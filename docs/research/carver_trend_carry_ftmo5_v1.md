@@ -1,5 +1,15 @@
 # carver_trend_carry_ftmo5_v1 — preregistration
 
+Current candidate outcome metadata (recorded without rerunning or altering the
+frozen evaluator):
+
+```yaml
+candidate_id: carver_trend_carry_ftmo5_v1
+outcome: DEPLOYMENT_FEASIBILITY_BLOCKED
+alpha_evaluated: false
+reason: frozen aggregate Swing margin constraint breached before returns
+```
+
 This candidate has a complete preregistered DEVELOPMENT evaluator but no
 DEVELOPMENT result. The final evaluator freeze was completed before any strategy
 return was accessed. Validation and final holdout are sealed.
