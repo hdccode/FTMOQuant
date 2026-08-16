@@ -82,6 +82,23 @@ def test_semantic_sha_covers_grid_and_selector_order() -> None:
     )
 
 
+def test_pre_data_normalization_amendment_is_frozen_without_alpha_drift() -> None:
+    document = load_eurusd_tsm_spec().canonical_document
+    risk = document["risk_normalization"]
+    amendment = document["preregistration_amendments"][0]
+
+    assert EURUSD_TSM_SEMANTIC_SHA256 != (
+        "6f2cdf187e40e9bc9c065c7e7befa16f89d1fe380c8626ab853474658466f116"
+    )
+    assert risk["type"] == "causal_pre_execution_underlying_vol_target"
+    assert risk["observation_rule"] == (
+        "daily_return_endpoint_information_time_strictly_before_decision"
+    )
+    assert amendment["observed_development_trial_results"] == 0
+    assert amendment["observed_development_fold_results"] == 0
+    assert amendment["historical_development_strategy_returns_accessed"] is False
+
+
 def test_existing_three_development_folds_are_frozen_exactly() -> None:
     folds = frozen_development_folds()
     declared = load_eurusd_tsm_spec().canonical_document["development_folds"]

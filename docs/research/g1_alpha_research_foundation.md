@@ -14,10 +14,13 @@ spread, commission, latency, causality, and event-ordering authority. Family
 implementations provide causal signal/state plus a bounded parameter
 declaration; a caller-supplied authoritative evaluator returns common metrics.
 
-All family comparisons use fixed 1% annualized volatility normalization. The
-normalizer rejects zero, negative, non-finite, or numerically pathological
-inputs. The target is immutable and is not an FTMO leverage, margin, pass-rate,
-or live-risk target.
+All family comparisons use causal pre-execution exposure targeting at fixed 1%
+annualized volatility. The generic normalizer consumes an ex-ante underlying
+instrument risk estimate fixed before the target decision; it never estimates a
+scale from realized strategy returns. Unavailable, zero, negative, non-finite,
+or numerically pathological volatility fails closed to zero nonzero exposure.
+The target is immutable and is not an FTMO leverage, margin, pass-rate, or
+live-risk target.
 
 `DevelopmentSearchContext` exposes only a configurable DEVELOPMENT interval and
 explicit rolling train/evaluation windows. Requests outside it, explicit

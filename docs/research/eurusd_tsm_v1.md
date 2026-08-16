@@ -3,8 +3,25 @@
 Status: `preregistered_not_run`. The authoritative machine-readable protocol is
 [`config/strategies/eurusd_tsm_v1.yaml`](../../config/strategies/eurusd_tsm_v1.yaml),
 with semantic SHA-256
-`6f2cdf187e40e9bc9c065c7e7befa16f89d1fe380c8626ab853474658466f116`.
+`0a5411f003dba15d88b8f2ad7368ad9d25cc16a5474108879eb012658c670a98`.
 No historical strategy return was calculated while creating this protocol.
+
+## Pre-data amendment record
+
+The original semantic SHA
+`6f2cdf187e40e9bc9c065c7e7befa16f89d1fe380c8626ab853474658466f116`
+was superseded on 2026-08-16, before the first DEVELOPMENT run, because the
+generic normalizer scaled an entire realized-return sequence with its
+whole-sample standard deviation. That made earlier normalized returns depend on
+future returns. Preflight stopped at repository commit
+`ca53c43d0c3486427cdc533892cd359581325752`; zero trial results, zero fold
+results, and zero historical DEVELOPMENT strategy returns had been exposed.
+Validation and final holdout were untouched.
+
+The amendment changes only common G1 risk normalization. It does not change the
+alpha signal, grid, folds, sample threshold, costs, eligibility, selector, or
+neighbours. The resulting amended SHA is
+`0a5411f003dba15d88b8f2ad7368ad9d25cc16a5474108879eb012658c670a98`.
 
 ## Hypothesis and reuse
 
@@ -80,9 +97,33 @@ half of realized base variable costs, matching the existing TSM evaluator.
 There is no additional execution perturbation because the generic engine does
 not yet implement one.
 
-Raw target returns are normalized by the common G1 normalizer to 1% annualized
-volatility for family comparison. This is not causal live sizing and introduces
-no Challenge margin, daily-loss, pass-probability, or funded-account rule.
+At each target decision, common G1 sizing reads EUR/USD completed BID/ASK
+midpoint daily log returns whose endpoint information timestamps are strictly
+earlier than the decision. Pandas' bias-corrected exponentially weighted
+variance (`Series.ewm(com=60, adjust=True, min_periods=20,
+ignore_na=False).var(bias=False)`) is annualized by `sqrt(252)`. Desired
+dimensionless exposure is `directional_signal × 0.01 / ex_ante_volatility`.
+
+The first 20 completed daily returns are warm-up; until then, a nonzero signal
+produces zero exposure. Zero, non-finite, unavailable, or otherwise pathological
+volatility also fails closed to zero exposure without a floor or future
+backfill. H1 and H4 decisions at the same timestamp query the same daily
+EUR/USD estimator.
+
+Risk sizing is recomputed at every configured refresh, including when the raw
+direction is unchanged. The family continues to expose changed targets as its
+alpha-signal stream, while a separate target-refresh stream exposes unchanged
+directions to the common sizing layer. This changes exposure as causal daily
+volatility changes without changing the alpha target or adding a grid degree of
+freedom.
+
+One unit of desired exposure maps to the already-frozen 100,000 EUR base-unit
+research quantity. The native order is the difference between current and
+desired scaled base units, so observed spread, native commission, slippage,
+turnover, and subsequent P&L use actual filled quantity. Sizing occurs before
+G0.7 order submission and never rescales already-realized P&L. This remains
+research normalization and introduces no Challenge margin, daily-loss,
+pass-probability, or funded-account rule.
 
 ## Eligibility and selection
 

@@ -30,6 +30,11 @@ from ftmoquant.backtest.execution_harness import (
 )
 from ftmoquant.data.dukascopy import SourceBar, _eurusd_instrument, _to_nautilus_bars
 from ftmoquant.prop_rules import EvaluationPhase
+from ftmoquant.research.g1.normalization import (
+    CausalEwmaDailyVolatility,
+    CompletedDailyLogReturn,
+    G1VolatilityNormalizer,
+)
 
 START = datetime(2024, 1, 2, tzinfo=UTC)
 RULE_CONFIG = Path("config/prop/ftmo_2step_swing_2026-08.yaml").resolve()
@@ -130,6 +135,81 @@ def test_fixed_fee_changes_native_account_balance(tmp_path: Path) -> None:
     assert Decimal(free.result_summary["ending_balance"]) - Decimal(
         charged.result_summary["ending_balance"]
     ) == Decimal("2.00")
+
+
+def test_causal_scaled_exposure_and_costs_reach_native_execution(
+    tmp_path: Path,
+) -> None:
+    day_ns = 86_400_000_000_000
+    returns = tuple(
+        CompletedDailyLogReturn(
+            (index + 1) * day_ns,
+            0.008 if index % 2 else -0.006,
+        )
+        for index in range(25)
+    )
+    decision = G1VolatilityNormalizer().target_at(
+        1.0,
+        26 * day_ns,
+        CausalEwmaDailyVolatility(returns),
+    )
+    quantity = abs(decision.target_base_units(Decimal("100000"))).quantize(
+        Decimal("0.00000001")
+    )
+    plan = ProbePlan(
+        order_kind=ProbeOrderKind.MARKET,
+        side=ProbeSide.BUY,
+        quantity=quantity,
+        entry_bar_index=0,
+        exit_bar_index=3,
+    )
+    prefix_root = _catalog_root(tmp_path / "prefix-data", _flat_minutes(8))
+    future_prices = (
+        *(Decimal("1.10000") for _ in range(8)),
+        Decimal("1.50000"),
+        Decimal("0.70000"),
+    )
+    extended_root = _catalog_root(
+        tmp_path / "extended-data",
+        _flat_minutes(10),
+        base_prices=future_prices,
+    )
+
+    prefix = _run(
+        prefix_root,
+        tmp_path / "prefix-run",
+        plan=plan,
+        per_contract_fee=Decimal("1"),
+    )
+    extended = _run(
+        extended_root,
+        tmp_path / "extended-run",
+        plan=plan,
+        per_contract_fee=Decimal("1"),
+    )
+    double_plan = replace(plan, quantity=quantity * 2)
+    doubled = _run(
+        prefix_root,
+        tmp_path / "double-run",
+        plan=double_plan,
+        per_contract_fee=Decimal("1"),
+    )
+
+    assert Decimal(prefix.result_summary["fills"][0]["last_qty"]) == quantity
+    assert prefix.result_summary["ending_balance"] == extended.result_summary[
+        "ending_balance"
+    ]
+    capital = Decimal("100000")
+    prefix_cost = capital - Decimal(prefix.result_summary["ending_balance"])
+    doubled_cost = capital - Decimal(doubled.result_summary["ending_balance"])
+    assert abs(doubled_cost - prefix_cost * 2) <= Decimal("0.03")
+    prefix_commission = Decimal(
+        prefix.result_summary["fills"][0]["commission"].split()[0]
+    )
+    doubled_commission = Decimal(
+        doubled.result_summary["fills"][0]["commission"].split()[0]
+    )
+    assert abs(doubled_commission - prefix_commission * 2) <= Decimal("0.01")
 
 
 def test_deterministic_seed_and_identical_inputs_reproduce_native_state(
@@ -320,6 +400,7 @@ def _run(
     limit_fill: Decimal = Decimal(1),
     insert_latency_ns: int = 0,
     fixed_fee: Decimal = Decimal(0),
+    per_contract_fee: Decimal | None = None,
     adaptive: bool = False,
     rollover: bool = False,
     rollover_records: tuple[InterestRateInput, ...] | None = None,
@@ -345,17 +426,26 @@ def _run(
             ),
         )
         calibration = CalibrationStatus.PROXY
+    fee = (
+        FeeModelConfig(
+            kind=FeeModelKind.PER_CONTRACT,
+            commission=per_contract_fee,
+            currency="USD",
+        )
+        if per_contract_fee is not None
+        else FeeModelConfig(
+            kind=FeeModelKind.FIXED,
+            commission=fixed_fee,
+            currency="USD",
+            charge_commission_once=True,
+        )
+    )
     profile = replace(
         _profile(),
         fill_on_limit_probability=limit_fill,
         adverse_slippage_probability=slippage,
         insert_latency_ns=insert_latency_ns,
-        fee=FeeModelConfig(
-            kind=FeeModelKind.FIXED,
-            commission=fixed_fee,
-            currency="USD",
-            charge_commission_once=True,
-        ),
+        fee=fee,
         rollover=rollover_config,
         adaptive_high_low_ordering=adaptive,
         calibration_status=calibration,

@@ -58,6 +58,7 @@ class EurusdTsmSignal:
     normalized_trailing_return: float
     signal_event_ns: int
     signal_information_ns: int
+    target_changed: bool
 
 
 class EurusdTsmState:
@@ -83,6 +84,12 @@ class EurusdTsmState:
 
     def on_bar(self, pair: CompletedPair) -> EurusdTsmSignal | None:
         """Consume one completed pair and possibly emit one changed raw target."""
+
+        refresh = self.on_target_refresh(pair)
+        return refresh if refresh is not None and refresh.target_changed else None
+
+    def on_target_refresh(self, pair: CompletedPair) -> EurusdTsmSignal | None:
+        """Consume a bar and expose every valid scheduled target refresh."""
 
         if pair.timeframe is not self._timeframe:
             raise EurusdTsmValidationError("completed bar timeframe is not configured")
@@ -138,8 +145,7 @@ class EurusdTsmState:
             if normalized < -self.parameters.deadband
             else RawDirectionalTarget.FLAT
         )
-        if target is self._latest_target:
-            return None
+        changed = target is not self._latest_target
         self._latest_target = target
         return EurusdTsmSignal(
             target=target,
@@ -148,6 +154,7 @@ class EurusdTsmState:
             normalized_trailing_return=normalized,
             signal_event_ns=pair.ts_event,
             signal_information_ns=pair.info_time_ns,
+            target_changed=changed,
         )
 
 
@@ -243,6 +250,18 @@ class EurusdTsmFamily(
         state = self.create_state(parameters)
         return tuple(
             signal for pair in data if (signal := state.on_bar(pair)) is not None
+        )
+
+    def build_target_refreshes(
+        self, data: Sequence[CompletedPair], parameters: ParameterMapping
+    ) -> tuple[EurusdTsmSignal, ...]:
+        """Return all risk-sizing refreshes while preserving changed-alpha output."""
+
+        state = self.create_state(parameters)
+        return tuple(
+            refresh
+            for pair in data
+            if (refresh := state.on_target_refresh(pair)) is not None
         )
 
     def neighbours(

@@ -23,7 +23,7 @@ from ftmoquant.research.stage_g import (
 
 EURUSD_TSM_SPEC_PATH = Path("config/strategies/eurusd_tsm_v1.yaml")
 EURUSD_TSM_SEMANTIC_SHA256 = (
-    "6f2cdf187e40e9bc9c065c7e7befa16f89d1fe380c8626ab853474658466f116"
+    "0a5411f003dba15d88b8f2ad7368ad9d25cc16a5474108879eb012658c670a98"
 )
 
 
@@ -108,6 +108,7 @@ def load_eurusd_tsm_spec(path: Path = EURUSD_TSM_SPEC_PATH) -> EurusdTsmSpec:
             "search",
             "sealed_partitions",
             "reuse",
+            "preregistration_amendments",
             "semantic_sha256",
         },
         "spec",
@@ -243,13 +244,59 @@ def _validate_risk_execution(document: dict[str, Any]) -> None:
     risk = _mapping(document["risk_normalization"], "risk_normalization")
     execution = _mapping(document["execution_and_costs"], "execution_and_costs")
     if (
-        risk.get("target_annualized_volatility") != 0.01
-        or risk.get("ftmo_or_g4_sizing") is not False
+        risk
+        != {
+            "type": "causal_pre_execution_underlying_vol_target",
+            "target_annualized_volatility": 0.01,
+            "implementation": (
+                "ftmoquant.research.g1.normalization.G1VolatilityNormalizer"
+            ),
+            "underlying_instrument": "EUR/USD.DUKASCOPY",
+            "source": "completed_bid_ask_midpoint_daily_log_returns",
+            "daily_observation_semantics": (
+                "existing_17_00_America_New_York_completed_pair"
+            ),
+            "estimator": {
+                "library_primitive": "pandas.Series.ewm.var",
+                "kind": "exponentially_weighted_variance",
+                "center_of_mass_trading_days": 60.0,
+                "adjust": True,
+                "bias": False,
+                "ignore_na": False,
+                "minimum_completed_returns": 20,
+                "annualization_days": 252,
+            },
+            "observation_rule": (
+                "daily_return_endpoint_information_time_strictly_before_decision"
+            ),
+            "warmup_behavior": "unavailable_zero_nonzero_exposure",
+            "future_backfill": "forbidden",
+            "pathological_volatility_behavior": (
+                "fail_closed_zero_nonzero_exposure"
+            ),
+            "exposure_formula": (
+                "directional_signal_times_0.01_divided_by_ex_ante_annualized_volatility"
+            ),
+            "sizing_refresh_rule": (
+                "every_configured_refresh_including_unchanged_direction"
+            ),
+            "base_units_per_unit_exposure": "100000",
+            "target_quantity_rule": (
+                "desired_exposure_times_base_units_before_native_execution"
+            ),
+            "ftmo_or_g4_sizing": False,
+        }
         or execution.get("engine") != "existing_nautilus_g0_7_bid_ask_boundary"
         or execution.get("spread") != "observed_paired_bid_ask"
         or execution.get("cost_stress_multiplier") != 1.5
         or execution.get("cost_stress_formula")
         != "net_return_minus_one_half_realized_base_cost"
+        or execution.get("position_sizing_timing")
+        != "before_native_order_submission"
+        or execution.get("native_cost_quantity_basis")
+        != "actual_executed_scaled_delta_base_units"
+        or execution.get("turnover_basis")
+        != "actual_executed_scaled_target_changes"
         or execution.get("adverse_execution_perturbation")
         != "unused_no_generic_implementation"
     ):
@@ -284,6 +331,9 @@ def _validate_selection_and_seals(document: dict[str, Any]) -> None:
     policy = _mapping(selector.get("policy"), "selector.policy")
     search = _mapping(document["search"], "search")
     seals = _mapping(document["sealed_partitions"], "sealed_partitions")
+    amendments = _list(
+        document["preregistration_amendments"], "preregistration_amendments"
+    )
     if (
         eligibility.get("required_fold_count") != 3
         or eligibility.get("minimum_positive_folds") != 2
@@ -311,6 +361,28 @@ def _validate_selection_and_seals(document: dict[str, Any]) -> None:
         or seals.get("strategy_returns_accessed") is not False
         or not str(seals.get("validation", "")).startswith("locked")
         or seals.get("final_holdout") != "locked"
+        or amendments
+        != [
+            {
+                "amendment_id": "causal_g1_normalization_pre_data_2026_08_16",
+                "superseded_semantic_sha256": (
+                    "6f2cdf187e40e9bc9c065c7e7befa16f89d1fe380c8626ab853474658466f116"
+                ),
+                "reason_superseded": (
+                    "generic_normalizer_used_whole_realized_return_series"
+                ),
+                "amendment_date": "2026-08-16",
+                "repository_commit_before_amendment": (
+                    "ca53c43d0c3486427cdc533892cd359581325752"
+                ),
+                "observed_development_trial_results": 0,
+                "observed_development_fold_results": 0,
+                "historical_development_strategy_returns_accessed": False,
+                "validation_accessed": False,
+                "final_holdout_accessed": False,
+                "scope": "risk_normalization_only",
+            }
+        ]
     ):
         raise EurusdTsmSpecError("eligibility, selector, search, or seals drifted")
 

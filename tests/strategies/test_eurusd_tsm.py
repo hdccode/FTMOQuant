@@ -135,6 +135,21 @@ def test_refresh_interval_delays_reversal_until_predetermined_bar() -> None:
     assert reversal.target is RawDirectionalTarget.SHORT
 
 
+def test_unchanged_direction_remains_visible_to_risk_sizing_refreshes() -> None:
+    family = EurusdTsmFamily()
+    returns = [0.01 if index % 2 else -0.01 for index in range(14)] + [0.01] * 9
+    pairs = tuple(_pair(price, index) for index, price in enumerate(_prices(returns)))
+
+    changed = family.build_signals(pairs, _parameters(refresh=3))
+    refreshes = family.build_target_refreshes(pairs, _parameters(refresh=3))
+
+    assert len(changed) == 1
+    assert len(refreshes) == 2
+    assert refreshes[0].target_changed is True
+    assert refreshes[1].target_changed is False
+    assert refreshes[0].target is refreshes[1].target is RawDirectionalTarget.LONG
+
+
 def test_future_bars_cannot_change_preexisting_signal_history() -> None:
     family = EurusdTsmFamily()
     returns = [0.01 if index % 2 else -0.01 for index in range(14)] + [0.01] * 6
@@ -210,14 +225,7 @@ def test_one_percent_normalization_is_the_family_comparison_target() -> None:
     target = family.spec.canonical_document["risk_normalization"][
         "target_annualized_volatility"
     ]
-    normalized = G1VolatilityNormalizer().normalize(
-        (-0.001, 0.0, 0.001, 0.002), periods_per_year=252
-    )
+    exposure = G1VolatilityNormalizer().exposure_for_volatility(1.0, 0.10)
 
     assert target == 0.01
-    assert np_std(normalized) * math.sqrt(252) == pytest.approx(0.01)
-
-
-def np_std(values: tuple[float, ...]) -> float:
-    mean = sum(values) / len(values)
-    return math.sqrt(sum((value - mean) ** 2 for value in values) / (len(values) - 1))
+    assert exposure == pytest.approx(0.10)
