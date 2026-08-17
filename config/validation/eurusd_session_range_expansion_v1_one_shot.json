@@ -1,0 +1,122 @@
+{
+  "acceptance": {
+    "all_required": true,
+    "gates": [
+      "deterministic_evaluation_complete_and_numerically_valid",
+      "completed_executed_session_breakout_round_trips_gte_50",
+      "net_validation_return_gt_zero",
+      "cost_stressed_validation_return_gt_zero",
+      "net_expectancy_per_trade_gt_zero",
+      "cost_stressed_expectancy_per_trade_gt_zero"
+    ],
+    "minimum_completed_executed_trades": 50,
+    "minimum_trade_count_rationale": "selected_candidate_produced_210_pooled_development_trades_over_approximately_three_years_validation_spans_498_days_100_trades_would_approximate_the_full_expected_validation_count_at_the_development_average_frequency_making_it_an_unnecessarily_brittle_minimum_50_is_frozen_pre_validation_as_the_minimum_evidential_sample",
+    "non_gating_diagnostics": [
+      "sharpe",
+      "maximum_drawdown",
+      "yearly_concentration",
+      "development_return_magnitude_comparison",
+      "ftmo_challenge_rules"
+    ],
+    "pass_outcome": "VALIDATION_PASSED",
+    "reject_outcome": "VALIDATION_REJECTED"
+  },
+  "cross_partition_session_warmup": {
+    "problem": "validation_start_2023_04_11T00_00_00Z_is_2023_04_11_01_00_Europe_London_BST_so_the_frozen_00_00_London_range_start_for_that_day_falls_strictly_before_validation_start",
+    "policy": "allow_causal_development_observations_strictly_before_validation_start_to_warm_the_current_london_days_overnight_range_state_and_the_daily_ewma_risk_estimator_and_any_other_strictly_causal_state_required_by_the_frozen_implementation",
+    "state_warmed_from_development": [
+      "current_london_day_partial_overnight_range_high_low_and_completeness_count",
+      "causal_daily_ewma_risk_estimator"
+    ],
+    "state_reset_at_validation_start": [
+      "account_balance",
+      "equity",
+      "realized_and_unrealized_pnl",
+      "turnover_accumulators"
+    ],
+    "development_execution_or_pnl_counted_in_validation": false,
+    "only_validation_interval_signals_may_generate_validation_trades": true,
+    "session_or_range_state_reset_at_validation_start": false,
+    "first_validation_day_may_use_a_range_partly_formed_from_development_observations": true
+  },
+  "development_evidence": {
+    "development_result_sha256": "29624afabebb7f68583871805831f01d25e0fddb1a3d00bd45bddb19ee4aeb27",
+    "historical_run_commit": "328b988d8805dcab295f95492a05a72e81b96d5c",
+    "selected_candidate_sha256": "7b8d42b30f04dc5694550a28825fa92f1eb548fdf1faa808b1e5add9efdacf0f",
+    "trial_registry_sha256": "9b31ee9630c40c0858d7df56a4ab5b44f01c664faa24f8874e4593e48d2f01de"
+  },
+  "dst_semantics": {
+    "policy": "frozen_and_unchanged_for_validation",
+    "range_completeness_rule": "exactly_480_consecutive_valid_completed_1m_midpoints_during_00_00_to_08_00_london_time",
+    "short_or_long_dst_transition_days": "remain_invalid_no_trade_not_normalized_or_fixed_for_validation"
+  },
+  "execution": {
+    "cost_stress_formula": "base_net_return_minus_half_realized_base_variable_cost",
+    "cost_stress_multiplier": 1.5,
+    "end_boundary": "final_available_tradable_observation_strictly_before_validation_end_exclusive",
+    "entry_execution_rule": "first_synchronized_tradable_1m_bid_ask_frame_strictly_after_signal_information_time",
+    "evaluator_reference": "ftmoquant.research.eurusd_session_range_expansion_development",
+    "evaluator_version": "eurusd-session-range-expansion-v1-development-evaluator-1",
+    "exit_execution_rule": "first_synchronized_tradable_1m_bid_ask_frame_strictly_after_exit_signal_information_time",
+    "same_bar_fill": "forbidden",
+    "midpoint_execution": "forbidden",
+    "semantics": "identical_to_frozen_development_evaluator"
+  },
+  "family": {
+    "family_id": "eurusd_session_range_expansion_v1",
+    "family_semantic_sha256": "3fc1fd836fdfe6999a0ff370e7285752768078e70dca9547723a5772f8a16585",
+    "family_version": "1.0.0"
+  },
+  "final_holdout": {
+    "accessed": false,
+    "locked": true,
+    "start_utc": "2024-08-21T00:00:00Z"
+  },
+  "one_shot": {
+    "alternate_candidate_after_rejection": "forbidden",
+    "fixed_output_directory": ".artifacts/g1_4h/eurusd_session_range_expansion_v1/validation_run",
+    "maximum_configurations": 1,
+    "permitted_trial_ids": [
+      "cce6c53bd97b188ae3bf735f3ce52b9bfbdc3dc2ff7aaa456a40758a21b4bc69"
+    ],
+    "validation_search_or_selection": "forbidden"
+  },
+  "protocol_id": "eurusd_session_range_expansion_v1-one-shot-validation-1",
+  "risk_sizing": {
+    "estimator": "existing_strictly_prior_daily_ewma_annualized_volatility_estimator",
+    "exposure_formula": "direction_times_0.01_divided_by_causal_ex_ante_eurusd_annualized_volatility",
+    "in_trade_resizing": "none",
+    "sizing_timing": "at_entry_only",
+    "exit_target_exposure": 0
+  },
+  "sample_count": {
+    "definition": "completed_executed_session_breakout_round_trips",
+    "one_entry_plus_scheduled_exit_equals_one_trade": true,
+    "count_entry_and_exit_separately": false,
+    "count_orders_fills_bars_no_trade_days_separately": false
+  },
+  "schema": "ftmoquant.eurusd-session-range-expansion-v1-one-shot-validation-protocol",
+  "schema_version": 1,
+  "selected_candidate": {
+    "parameters": {
+      "breakout_window_end": "11:00",
+      "scheduled_exit": "17:00"
+    },
+    "trial_id": "cce6c53bd97b188ae3bf735f3ce52b9bfbdc3dc2ff7aaa456a40758a21b4bc69"
+  },
+  "semantic_sha256": "689f08bc55bf2a81bf9f04066030ea51870b030eac751645bab3742ff9cb1f07",
+  "status": "frozen_pre_validation_unobserved",
+  "validation_partition": {
+    "duration_days": 498,
+    "end_exclusive_utc": "2024-08-21T00:00:00Z",
+    "identifier": "g1_4_fx_usd_liquid_v1.validation",
+    "minimum_duration_days_for_frozen_threshold": 365,
+    "partition": "validation",
+    "start_utc": "2023-04-11T00:00:00Z",
+    "validation_split_semantic_sha256": {
+      "EUR/USD.DUKASCOPY": "9cc2bc9da1f147de2e2a18427d380ca7fd5e5fdbc9d1bd4f733554cd8edb7ffa",
+      "GBP/USD.DUKASCOPY": "6d52937c3837e711be3e0e2bc183dbde1d5bc7f6c67f5ab46b57aba3a58f1823"
+    }
+  },
+  "validation_returns_accessed": false
+}
