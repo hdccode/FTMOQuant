@@ -38,3 +38,28 @@ uv run python -m ftmoquant.research.eurusd_tsm_validation \
 
 If the candidate fails, the outcome is `VALIDATION_REJECTED`; no alternate
 DEVELOPMENT candidate may be tried.
+
+## Validation decision record
+
+Status: **VALIDATION_REJECTED / closed**. The one-shot run executed on
+2026-08-16 against the sealed EUR/USD validation split
+(`/Users/Shared/FTMOQuant-data/g1_4a/eurusd_corrected_v1_splits/validation`,
+manifest SHA-256 `9cc2bc9d...bca964a` matching the frozen protocol) and wrote
+`.artifacts/g1_4h/eurusd_tsm_v1/validation_run/{validation_result.json,
+artifact_hashes.json, runtime_provenance.json}`.
+
+The candidate executed 251 raw alpha transitions (≥ 100 required) but failed
+four of the six frozen PASS gates: net return `-0.83574%`, 1.5×-cost-stressed
+return `-0.87874%`, net expectancy `-3.3296e-05` (`≈ -0.333 bp/transition`),
+and cost-stressed expectancy `-3.5009e-05` (`≈ -0.350 bp/transition`) were all
+non-positive. Diagnostic-only figures: Sharpe `-0.6776` (vs. DEVELOPMENT mean
+fold Sharpe `0.7131`), maximum drawdown `1.5258%` (vs. DEVELOPMENT
+`0.9002%`). Yearly net expectancy was positive in 2023 (`+0.0022197`) and
+negative in 2024 (`-0.0105771`).
+
+This is a terminal record: no alternate DEVELOPMENT candidate was tried, no
+tuning followed from these numbers, the final holdout was not accessed
+(`final_holdout_accessed: false`), and DEVELOPMENT was not rerun (its three
+frozen artifacts remain byte-identical to the DEVELOPMENT report). See
+[`g1/outcomes.py`](../../src/ftmoquant/research/g1/outcomes.py)'s
+`EURUSD_TSM_V1_OUTCOME` for the formal outcome record.

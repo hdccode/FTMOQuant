@@ -28,3 +28,20 @@ CARVER_V1_OUTCOME = CandidateOutcomeRecord(
     alpha_evaluated=False,
     reason="frozen aggregate Swing margin constraint breached before returns",
 )
+
+EURUSD_TSM_V1_OUTCOME = CandidateOutcomeRecord(
+    candidate_id="eurusd_tsm_v1",
+    outcome=CandidateOutcome.VALIDATION_REJECTED,
+    alpha_evaluated=True,
+    reason=(
+        "one-shot validation of trial "
+        "0b84330c4e13b930c6d3a2ef0a3d16424210c6f61414bd5a8dad8842dbca964a "
+        "(H4, lookback=6, deadband=0.25, refresh=3) over "
+        "[2023-04-11T00:00:00Z, 2024-08-21T00:00:00Z): 251 executed raw alpha "
+        "transitions, net return -0.83574%, 1.5x-cost-stressed return "
+        "-0.87874%, net expectancy -0.333 bp/transition, stressed expectancy "
+        "-0.350 bp/transition, Sharpe -0.6776, max drawdown 1.5258%; four of "
+        "six frozen PASS gates failed (net return, stressed return, net "
+        "expectancy, stressed expectancy)"
+    ),
+)

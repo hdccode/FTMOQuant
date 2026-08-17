@@ -1,0 +1,224 @@
+schema_version: 1
+
+family:
+  family_id: eurusd_liquidity_shock_reversion_v1
+  version: 1.0.0
+  status: preregistered_not_run
+  economic_hypothesis: >-
+    Very large short-horizon EUR/USD price changes can contain a temporary
+    liquidity/dislocation component that partially mean-reverts over the
+    following minutes after realistic transaction costs.
+
+dataset:
+  instrument_id: EUR/USD.DUKASCOPY
+  universe_id: g1_4_fx_usd_liquid_v1
+  universe_plan_sha256: 16c29df7bae3bde0a9e64e2cc7758f158186182a3d7a464347791400abcfff69
+  universe_readiness_sha256: e6d511bb7bbea6b80c42b00c3f1b4c79ea35cd4532d5f71b69ee8f43bea3f8a0
+  partition: development
+  development_start_utc: "2019-03-11T00:00:00Z"
+  development_end_exclusive_utc: "2023-04-11T00:00:00Z"
+  source: existing_canonical_g0_5_g0_6_derived_1m_bid_ask_bars
+  missing_data_policy: no_fill_no_interpolation_reset_signal_history
+
+session:
+  session_id: all
+  optimized: false
+
+parameter_grid:
+  baseline_prior_returns: [30, 60, 120]
+  shock_multiple: [3.0, 4.0, 5.0, 6.0]
+  hold_eligible_minutes: [5, 15, 30]
+  combination_rule: full_unconditional_cartesian_product
+  expected_unique_trial_count: 36
+
+signal:
+  price: synchronized_completed_1m_bid_ask_midpoint_close
+  return_formula: ln(C_t / C_t_minus_1)
+  eligible_return: consecutive_observed_valid_completed_1m_midpoint_closes
+  missing_or_invalid_rule: no_signal_and_not_an_eligible_return_reset_chain
+  fill_or_interpolation: false
+  baseline_scale: median_absolute_log_return
+  baseline_observation_window: baseline_prior_returns
+  shock_rule: abs(r_t) > shock_multiple * baseline_scale
+  positive_shock_target: -1
+  negative_shock_target: 1
+  zero_or_invalid_scale: no_signal
+  insufficient_history: no_signal
+  signals_while_position_or_pending: ignore
+  raw_magnitudes: [-1, 0, 1]
+
+risk_normalization:
+  type: causal_pre_execution_underlying_vol_target
+  target_annualized_volatility: 0.01
+  implementation: ftmoquant.research.g1.normalization.G1VolatilityNormalizer
+  underlying_instrument: EUR/USD.DUKASCOPY
+  source: completed_bid_ask_midpoint_daily_log_returns
+  daily_observation_semantics: existing_17_00_America_New_York_completed_pair
+  estimator:
+    library_primitive: pandas.Series.ewm.var
+    kind: exponentially_weighted_variance
+    center_of_mass_trading_days: 60.0
+    adjust: true
+    bias: false
+    ignore_na: false
+    minimum_completed_returns: 20
+    annualization_days: 252
+  observation_rule: daily_return_endpoint_information_time_strictly_before_decision
+  warmup_behavior: unavailable_zero_nonzero_exposure
+  future_backfill: forbidden
+  pathological_volatility_behavior: fail_closed_zero_nonzero_exposure
+  exposure_formula: directional_signal_times_0.01_divided_by_ex_ante_annualized_volatility
+  sizing_refresh_rule: sized_once_at_entry_no_in_trade_resizing
+  base_units_per_unit_exposure: "100000"
+  target_quantity_rule: desired_exposure_times_base_units_before_native_execution
+  ftmo_or_g4_sizing: false
+
+execution_and_costs:
+  engine: existing_nautilus_g0_7_bid_ask_boundary
+  execution_timing: >-
+    first synchronized tradable EUR/USD one-minute BID/ASK observation
+    strictly after signal/exit information time
+  entry_timing_rule: first_eligible_information_time_strictly_after_signal_information_time
+  hold_eligible_completed_minutes_after_entry: hold_eligible_minutes
+  exit_timing_rule: >-
+    flat_at_first_eligible_information_time_strictly_after_the_configured_hold_eligible_minutes_after_entry
+  max_open_positions: 1
+  overlapping_shocks_while_positioned_or_pending: ignored
+  stop_loss: none
+  take_profit: none
+  spread: observed_paired_bid_ask
+  commission_slippage_latency_profile: canonical_g0_7_uncalibrated_baseline
+  cost_stress_multiplier: 1.5
+  cost_stress_formula: net_return_minus_one_half_realized_base_cost
+  position_sizing_timing: before_native_order_submission
+  native_cost_quantity_basis: actual_executed_scaled_delta_base_units
+  turnover_basis: actual_executed_scaled_target_changes
+  adverse_execution_perturbation: unused_no_generic_implementation
+  parallel_backtester: false
+  ftmo_optimization: false
+
+development_folds:
+  version: g1.4b-development-folds-1
+  semantic_sha256: 805687e8657c1482d5f8cff4b513385eebfc6a62795735fd4b390019b2e1fdfe
+  folds:
+    - fold_id: dev_fold_1
+      train_start_utc: "2019-03-11T00:00:00Z"
+      train_end_exclusive_utc: "2020-04-11T00:00:00Z"
+      evaluate_start_utc: "2020-04-11T00:00:00Z"
+      evaluate_end_exclusive_utc: "2021-04-11T00:00:00Z"
+    - fold_id: dev_fold_2
+      train_start_utc: "2019-03-11T00:00:00Z"
+      train_end_exclusive_utc: "2021-04-11T00:00:00Z"
+      evaluate_start_utc: "2021-04-11T00:00:00Z"
+      evaluate_end_exclusive_utc: "2022-04-11T00:00:00Z"
+    - fold_id: dev_fold_3
+      train_start_utc: "2019-03-11T00:00:00Z"
+      train_end_exclusive_utc: "2022-04-11T00:00:00Z"
+      evaluate_start_utc: "2022-04-11T00:00:00Z"
+      evaluate_end_exclusive_utc: "2023-04-11T00:00:00Z"
+
+eligibility:
+  required_fold_count: 3
+  minimum_positive_folds: 2
+  minimum_pooled_executed_transitions: 100
+  gates:
+    - status_is_complete
+    - all_required_folds_present
+    - minimum_pooled_executed_transitions_met
+    - pooled_net_expectancy_gt_zero
+    - pooled_cost_stressed_expectancy_gt_zero
+    - strict_majority_of_fold_expectancies_positive
+    - all_numerical_validity_checks_pass
+  maximum_drawdown_hard_gate: false
+  plateau_hard_gate: false
+  year_concentration_hard_gate: false
+
+sample_count:
+  fold_metrics_trade_count: completed_executed_shock_round_trips
+  definition: one_entry_plus_its_eventual_exit_equals_one_evidential_trade
+  count_entry_and_exit_separately: false
+  count_ignored_shocks_while_positioned: false
+  count_unexecuted_signals: false
+  count_orders: false
+  count_fills: false
+  count_bars: false
+  count_risk_only_rebalances: false
+  turnover_includes_all_scaled_executed_quantity_changes: true
+  costs_and_pnl_include_all_scaled_rebalances: true
+
+production_evaluator:
+  version: eurusd-liquidity-shock-reversion-v1-development-evaluator-1
+  module: ftmoquant.research.eurusd_liquidity_shock_reversion_development
+  trial_evaluator: >-
+    ftmoquant.research.eurusd_liquidity_shock_reversion_development.EurusdLiquidityShockReversionTrialEvaluator
+  runner: >-
+    ftmoquant.research.eurusd_liquidity_shock_reversion_development.run_eurusd_liquidity_shock_reversion_development
+  command: uv run python -m ftmoquant.research.eurusd_liquidity_shock_reversion_development
+  generic_search_engine: ftmoquant.research.g1.search.run_search
+  fold_warmup: process_train_start_through_evaluation_without_training_orders
+  evaluation_order_window: decision_information_time_in_evaluation_half_open_interval
+  end_boundary: final_available_tradable_observation_strictly_before_evaluate_end
+  read_beyond_evaluate_end: false
+
+metric_definitions:
+  trade_count: completed_executed_shock_round_trips
+  turnover: total_absolute_executed_base_unit_change_divided_by_100000
+  net_expectancy: total_fold_net_return_divided_by_trade_count_zero_if_no_transitions
+  cost_stressed_expectancy: stressed_fold_net_return_divided_by_trade_count_zero_if_no_transitions
+  cost_stress: base_net_return_minus_half_realized_base_variable_cost
+  net_daily_mean: arithmetic_mean_of_causal_evaluation_daily_net_returns
+  sharpe: existing_ftmoquant_annualized_daily_sharpe_sqrt_252
+  drawdown: existing_ftmoquant_compounded_daily_return_maximum_drawdown
+  yearly_attribution: calendar_year_net_return_contribution
+  execution_perturbed_expectancy: null
+
+neighbours:
+  exactly_one_dimension_moves: true
+  adjacent_steps_only: true
+  ordered_dimensions: [baseline_prior_returns, shock_multiple, hold_eligible_minutes]
+
+selector:
+  implementation: ftmoquant.research.g1.selector.select_candidate
+  policy:
+    min_trade_count: 100
+    min_positive_folds: 2
+    max_drawdown: null
+    max_year_concentration: null
+    max_execution_sensitivity: null
+    min_evaluated_neighbours: 0
+    min_acceptable_neighbour_fraction: 0.0
+    required_fold_count: 3
+  ranking_order:
+    - descending positive DEVELOPMENT fold fraction
+    - descending acceptable evaluated-neighbour fraction
+    - ascending maximum absolute yearly concentration (missing last)
+    - ascending execution perturbation sensitivity (missing last)
+    - descending worst-fold net expectancy
+    - descending cost-stressed pooled expectancy
+    - descending pooled net expectancy
+    - ascending maximum drawdown
+    - ascending deterministic trial_id tie-breaker
+  weighted_score: false
+
+search:
+  mode: exact_grid
+  seed: 0
+  optuna: false
+  parameter_grid_frozen_before_returns: true
+  enlargement_after_results: forbidden
+  experiment_interpretation: one_declared_family_experiment_with_36_cells
+  deflated_sharpe_ratio: not_implemented_extension_point
+  probability_of_backtest_overfitting: not_implemented_extension_point
+
+sealed_partitions:
+  validation: locked_until_one_development_candidate_is_frozen
+  final_holdout: locked
+  strategy_returns_accessed: false
+
+reuse:
+  raw_target_enum: ftmoquant.strategies.ts_momentum.RawDirectionalTarget
+  causal_shock_reversion_logic: adapted_from_liquidity_shock_reversion_v1
+  execution_and_search_scaffolding: adapted_from_eurusd_tsm_v1
+  parallel_execution_engine: false
+
+semantic_sha256: 50cd4e5460e488e06b33edd48fdb482a549199bcca4daa48625ce74da3865ad8
