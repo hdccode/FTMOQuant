@@ -404,3 +404,105 @@ final-holdout return has been computed or read for this family.
 unconditionally refuses to execute (`EurusdPolicyRateCarryProxyEvaluationError`)
 if called, precisely to make that boundary a hard runtime fact rather than
 a convention.
+
+## Frozen one-shot validation protocol (pre-validation, unobserved)
+
+A frozen, machine-readable one-shot validation protocol now exists at
+[`config/validation/eurusd_policy_rate_carry_proxy_v1_one_shot.json`](../../config/validation/eurusd_policy_rate_carry_proxy_v1_one_shot.json),
+semantic SHA-256
+`5133900618c9cbe8744dbb5d0ad5163c16521af30a94b9745d09fb05a5e298cc`, loaded
+and strictly verified by
+[`src/ftmoquant/research/eurusd_policy_rate_carry_proxy_validation.py`](../../src/ftmoquant/research/eurusd_policy_rate_carry_proxy_validation.py).
+**Validation returns remain completely unobserved as of this writing** —
+the protocol, loader, and runner exist and are unit-tested, but
+`run_eurusd_policy_rate_carry_proxy_validation` has never been invoked, and
+`.artifacts/g1_4h/eurusd_policy_rate_carry_proxy_v1/validation_run/` does
+not exist.
+
+**Boundaries** (imported from `ftmoquant.research.stage_g`, never
+duplicated as hardcoded literals): `VALIDATION_START =
+2023-04-11T00:00:00Z` through `HOLDOUT_START = 2024-08-21T00:00:00Z`
+exclusive — 498 days, identical to every other family's validation
+partition in this repository.
+
+**Candidate**: this family is baseline-only (no parameter grid, no
+`select_candidate`/`run_search`/`assess_plateau`), so there is no
+`selected_candidate.json`/`trial_registry.json` to verify. DEVELOPMENT
+evidence instead means hash-checking the two existing artifacts directly:
+`development_result.json` (SHA-256
+`f44de295580517c9678b95d3c557e9f4a6c3b3df838df061656f2151029d5988`) and
+`post_run_integrity_audit.json` (SHA-256
+`3835ec98f107d303f321740e65e3487deb10ad1d396db0440c41584ef944a723`),
+cross-checked against `family_semantic_sha256` and
+`final_classification == "DEVELOPMENT_CANDIDATE_SELECTED"`.
+
+**The exact four hard gates** (`validation_passes`) — nothing else is
+gated:
+
+1. Deterministic, numerically valid completion (all reported metrics
+   finite).
+2. `observation_count >= 200` eligible daily total-return observations.
+3. `mean_daily_total_return > 0`.
+4. `stressed_mean_daily_total_return > 0` (1.5x execution-cost stress,
+   carry accrual untouched — identical stress formula to DEVELOPMENT).
+
+Sharpe, max drawdown, the stationary-bootstrap CI, carry/spot
+contributions, per-calendar-year sign, rate-regime attribution,
+DEVELOPMENT-comparison ratios, and FTMO rules are all reported as
+non-gating diagnostics only.
+
+**200-observation floor rationale**: DEVELOPMENT produced 258/259/260
+eligible observations per fold (777 pooled, corrected); the 498-day
+validation window mechanically contains substantially more than 200 under
+normal data coverage. 200 is a conservative pre-validation completeness
+floor chosen from DEVELOPMENT's own fold sizes and the validation window's
+duration alone — never from any validation-period return or rate
+observation.
+
+**Warm-up semantics**: the native engine, when actually run, starts at
+`DEVELOPMENT_START` (identical to every DEVELOPMENT fold's own
+`train_start_utc`) solely to let causal EWMA volatility and rate state
+warm up before `VALIDATION_START`. Warm-up days carry exactly zero
+exposure by construction (no instruction exists before
+`VALIDATION_START`), and are excluded from the sample regardless by
+`_decompositions_in_validation_window`, which delegates directly to the
+DEVELOPMENT module's already-fixed `_decompositions_in_evaluate_window` —
+not a reimplementation.
+
+**Corrected carry isolation reuse**: the validation module never
+recomputes a daily P&L decomposition. It calls the DEVELOPMENT module's
+`daily_decompositions_from_equity_marks` verbatim, which already isolates
+the native FX rollover cash event via `post.balance - pre.balance` (never
+an equity diff) and fails closed if a fill lands inside the pre/post
+rollover mark bracket.
+
+**Candidate-only protections**: the validation module never imports
+`ftmoquant.research.g1.search`, `ftmoquant.research.g1.selector`,
+`ftmoquant.research.g1.plateau`, or `TrialRegistry`/`run_search`-adjacent
+names (checked via `ast`-based static analysis of the module's own import
+statements, not a text grep, since the module's own docstring necessarily
+names those modules while explaining it never imports them). The one-shot
+output directory is fixed
+(`.artifacts/g1_4h/eurusd_policy_rate_carry_proxy_v1/validation_run/`) and
+a populated existing directory blocks any second run.
+
+**Runner command** (never executed in this task):
+
+```
+uv run python -m ftmoquant.research.eurusd_policy_rate_carry_proxy_validation \
+  --universe-readiness .artifacts/g1_4b/universe/ftmoquant_universe_readiness.json \
+  --development-root .artifacts/g1_4b/development/EURUSD \
+  --validation-root /Users/Shared/FTMOQuant-data/g1_4a/eurusd_corrected_v1_splits/validation \
+  --policy-rates-dir config/data/policy_rates
+```
+
+**Failure-after-exposure protocol** (documented, not automated — its
+absence is the safety property): once validation observations have
+actually been exposed by a real run, no automatic repair-and-rerun is
+permitted. Any runtime, data, or implementation failure discovered after
+such exposure must be reported explicitly — the exact failure, how much
+validation evidence was exposed, whether any economic result was actually
+generated, and whether the suspected bug is economically material — and
+requires explicit methodological review before any second validation
+attempt. See the docstring on
+`run_eurusd_policy_rate_carry_proxy_validation` for the full statement.

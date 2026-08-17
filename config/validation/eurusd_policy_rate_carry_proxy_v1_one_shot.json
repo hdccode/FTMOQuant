@@ -1,0 +1,91 @@
+{
+  "acceptance": {
+    "all_required": true,
+    "gates": [
+      "deterministic_numerically_valid_completion",
+      "eligible_daily_observations_gte_200",
+      "validation_mean_daily_total_return_gt_zero",
+      "cost_stressed_validation_mean_daily_total_return_gt_zero"
+    ],
+    "non_gated_diagnostics": [
+      "sharpe",
+      "max_drawdown",
+      "stationary_bootstrap_ci",
+      "carry_contribution",
+      "spot_contribution",
+      "individual_calendar_year_sign",
+      "development_comparison_ratios",
+      "ftmo_rules"
+    ]
+  },
+  "candidate": {
+    "cost_stress_multiplier": 1.5,
+    "execution": "existing_g0_7_bid_ask_boundary",
+    "parameter_search": "none",
+    "pending_target_policy": "latest_causal_target_supersedes_unexecuted_older_target",
+    "risk_normalization": "causal_1pct_annualized_g1_volatility_normalizer",
+    "rollover": "native_rc2_fx_rollover_interest_module_monthly_proxy_records",
+    "signal": "sign_of_causal_ecbdfr_minus_effr_differential"
+  },
+  "carry_isolation": {
+    "fill_inside_bracket": "fail_closed",
+    "forbidden_method": "post_equity_minus_pre_equity",
+    "method": "post_balance_minus_pre_balance"
+  },
+  "development_evidence": {
+    "corrected_fold_count": 3,
+    "corrected_pooled_mean_daily_total_return": 1.752728442728443e-05,
+    "corrected_pooled_observation_count": 777,
+    "corrected_pooled_stressed_mean_daily_total_return": 1.7465540498705657e-05,
+    "corrected_positive_fold_count": 2,
+    "development_classification": "DEVELOPMENT_CANDIDATE_SELECTED",
+    "development_result_sha256": "f44de295580517c9678b95d3c557e9f4a6c3b3df838df061656f2151029d5988",
+    "integrity_audit_sha256": "3835ec98f107d303f321740e65e3487deb10ad1d396db0440c41584ef944a723"
+  },
+  "family": {
+    "family_id": "eurusd_policy_rate_carry_proxy_v1",
+    "family_semantic_sha256": "b6b21d83e71e06c371645ea3dce33178e8168645c11d89c3f5ec63971c0023f9",
+    "family_version": "1.0.0"
+  },
+  "final_holdout": {
+    "accessed": false,
+    "locked": true
+  },
+  "one_shot": {
+    "alternate_candidate_after_rejection": "forbidden",
+    "fixed_output_directory": ".artifacts/g1_4h/eurusd_policy_rate_carry_proxy_v1/validation_run",
+    "maximum_configurations": 1,
+    "no_search_or_selector_imports": true,
+    "validation_search_or_selection": "forbidden"
+  },
+  "post_development_rate_covariate_seal": {
+    "mechanical_hash_provenance_validation_permitted": true,
+    "pre_run_summarization_of_validation_period_rates_forbidden": true,
+    "rate_data_consumed_only_during_the_one_shot_run_itself": true
+  },
+  "sample_semantics": {
+    "definition": "one_eligible_marked_trading_day_total_return_equals_one_evidential_observation",
+    "is_not_a_trade_count": true,
+    "minimum_eligible_observations": 200,
+    "minimum_rationale": "DEVELOPMENT produced 258/259/260 eligible observations across three ~1-year folds; the 498-day validation interval mechanically contains substantially more than 200 under normal coverage; 200 is a conservative pre-validation completeness floor, not chosen from validation returns"
+  },
+  "sample_window": {
+    "filter_rule": "validation_start_utc <= observation_date < validation_end_exclusive_utc",
+    "pre_validation_data_may_warm": [
+      "rate_state",
+      "ewma_volatility_state"
+    ],
+    "pre_validation_pnl_or_sample_counted": false
+  },
+  "schema": "ftmoquant.eurusd-policy-rate-carry-proxy-v1-one-shot-validation-protocol",
+  "schema_version": 1,
+  "semantic_sha256": "5133900618c9cbe8744dbb5d0ad5163c16521af30a94b9745d09fb05a5e298cc",
+  "status": "frozen_pre_validation_unobserved",
+  "validation_partition": {
+    "duration_days": 498,
+    "end_exclusive_utc": "2024-08-21T00:00:00Z",
+    "partition": "validation",
+    "start_utc": "2023-04-11T00:00:00Z"
+  },
+  "validation_returns_accessed": false
+}
