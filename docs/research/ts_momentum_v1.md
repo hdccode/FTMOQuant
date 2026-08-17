@@ -1,9 +1,40 @@
 # `ts_momentum_v1` Phase 1
 
-Status: **implemented, not evaluated**. No strategy return has been read. The
-machine-readable source of truth is
-`config/strategies/ts_momentum_v1.yaml`, with semantic SHA-256
-`edcbe2e4afe631e5fde1223558122ecf4d796abd0610729313ebbb32a468ccd5`.
+Status: **DEVELOPMENT_BURNED / `ALPHA_REJECTED`** (corrected 2026-08-17; see
+"Result / lifecycle correction" below). The YAML at
+`config/strategies/ts_momentum_v1.yaml` still literally reads
+`status: implemented_not_evaluated` — **that field is frozen and must not be
+edited**: `ts_momentum_config_sha256` hashes the entire YAML document, and
+`load_ts_momentum_spec` additionally requires the loaded document's identity
+tuple to exactly equal `(1, "ts_momentum_v1", "1.0.0",
+"implemented_not_evaluated")`, hardcoded in
+`src/ftmoquant/research/ts_momentum_spec.py`. Changing the field would break
+both the semantic hash
+(`edcbe2e4afe631e5fde1223558122ecf4d796abd0610729313ebbb32a468ccd5`) and the
+loader. The authoritative current status is recorded here and in
+[`TS_MOMENTUM_V1_OUTCOME`](../../src/ftmoquant/research/g1/outcomes.py).
+
+## Result / lifecycle correction
+
+Despite the text below stating *"No strategy return has been read"* and
+*"the real command has not been run,"* a real DEVELOPMENT run exists at
+`.artifacts/g1_4c/ts_momentum_v1/development/manifest.json` (code commit
+`86e8755fe7cdbe5df691ac898f7b1a024c5cef8e`, "Implement G1.4B tournament
+infrastructure"): 1/3 positive folds, worst-fold annualized net Sharpe
+`-1.568`, pooled mean daily net return `-8.68e-05`. `validation_accessed:
+false` and `final_holdout_accessed: false` — **validation and final holdout
+remain untouched**. No postmortem or formal `decision` field was ever
+recorded for this run; this correction is the first explicit disposition.
+Given negative pooled evidence and only 1 of 3 folds positive, this family
+is recorded as **`ALPHA_REJECTED`**: it did not survive DEVELOPMENT and was
+never promoted to validation. It must not be rerun based on this
+already-observed evidence, and any future EUR/USD time-series-momentum work
+should be understood as building on an already-tested, already-negative
+daily sign-following baseline (note: `eurusd_tsm_v1`, a *different*, later,
+H1/H4-lookback-based family, was independently preregistered, run, and
+`VALIDATION_REJECTED` — see
+[`docs/research/eurusd_tsm_v1.md`](eurusd_tsm_v1.md) — and should not be
+conflated with this one).
 
 ## Frozen hypothesis
 

@@ -1,0 +1,52 @@
+{
+  "schema": "ftmoquant.policy-rate-source-provenance",
+  "schema_version": 1,
+  "series": [
+    {
+      "series_id": "ECBDFR",
+      "series_name": "ECB Deposit Facility Rate for Euro Area",
+      "provider": "Federal Reserve Bank of St. Louis (FRED)",
+      "source_url": "https://fred.stlouisfed.org/graph/fredgraph.csv?id=ECBDFR&cosd=2018-01-01&coed=2025-12-31",
+      "series_page": "https://fred.stlouisfed.org/series/ECBDFR",
+      "retrieval_timestamp_utc": "2026-08-17T11:06:30Z",
+      "retrieved_range": {
+        "start_inclusive": "2018-01-01",
+        "end_inclusive": "2025-12-31"
+      },
+      "raw_file": "ECBDFR_raw.csv",
+      "raw_file_sha256": "a9993333c5648a3ee0cfbc6ac4cc925cb6270d9ccecfa32d0db62ea808d57fe4",
+      "raw_row_count": 2922,
+      "units": "percent_per_annum",
+      "native_frequency": "calendar_daily_including_weekends_forward_filled_by_provider",
+      "location_code_for_rollover_module": "EA19",
+      "currency": "EUR",
+      "missing_value_marker": "none_observed_in_retrieved_range"
+    },
+    {
+      "series_id": "EFFR",
+      "series_name": "Effective Federal Funds Rate",
+      "provider": "Federal Reserve Bank of St. Louis (FRED)",
+      "source_url": "https://fred.stlouisfed.org/graph/fredgraph.csv?id=EFFR&cosd=2018-01-01&coed=2025-12-31",
+      "series_page": "https://fred.stlouisfed.org/series/EFFR",
+      "retrieval_timestamp_utc": "2026-08-17T11:06:30Z",
+      "retrieved_range": {
+        "start_inclusive": "2018-01-01",
+        "end_inclusive": "2025-12-31"
+      },
+      "raw_file": "EFFR_raw.csv",
+      "raw_file_sha256": "1c53e1aa230fbe2d39275775206b64ad7e56d36c8cd63e572f492278a1c79a73",
+      "raw_row_count": 2087,
+      "units": "percent_per_annum",
+      "native_frequency": "us_business_days_only_gaps_on_weekends_and_us_holidays",
+      "location_code_for_rollover_module": "USA",
+      "currency": "USD",
+      "missing_value_marker": "empty_string_on_us_federal_holidays_79_rows_in_retrieved_range_skipped_and_forward_filled_from_latest_prior_observation"
+    }
+  ],
+  "policy": {
+    "never_infer_from_broker_swaps": true,
+    "never_backfill_from_future_observations": true,
+    "forward_fill_rule": "the_most_recent_causally_available_dated_observation_may_be_carried_forward_through_weekends_and_holidays_only_after_it_has_legally_entered_the_information_set",
+    "information_time_lag": "one_business_day_strictly_after_the_observation_date_before_the_strategy_signal_may_use_it"
+  }
+}

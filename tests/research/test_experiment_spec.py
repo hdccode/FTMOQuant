@@ -132,20 +132,25 @@ def test_rejects_cross_field_inconsistency(
         load_trend_pullback_spec(_write_config(tmp_path, config))
 
 
-def test_registry_declares_no_runtime_evidence() -> None:
+def test_registry_records_the_completed_trend_pullback_baseline() -> None:
+    """The frozen YAML `status` stays `specified_not_run` (it is part of the
+    hashed preregistration and must not change), but the registry row is a
+    separate, unhashed lifecycle record and must truthfully reflect that the
+    G1.3 baseline actually ran and failed (commit 4bb4ec5, postmortem
+    2801445; see docs/research/trend_pullback_v1.md)."""
     entries = load_experiment_registry(REGISTRY_PATH)
 
     assert len(entries) == 2
     entry = next(item for item in entries if item.strategy_id == "trend_pullback_v1")
-    assert entry.status == "specified_not_run"
+    assert entry.status == "completed"
     assert entry.strategy_config_sha256 == EXPECTED_CONFIG_SHA256
-    assert entry.git_commit == ""
-    assert entry.data_manifest_sha256 == ""
-    assert entry.execution_profile_sha256 == ""
-    assert entry.engine_version == ""
-    assert entry.run_seed == ""
-    assert entry.primary_metric_value == ""
-    assert entry.decision == "not_evaluated"
+    assert entry.git_commit == "4bb4ec507cfd5bf4cb1a47cd8c6972eeafb6c248"
+    assert entry.data_manifest_sha256 != ""
+    assert entry.execution_profile_sha256 != ""
+    assert entry.engine_version == "nautilus-trader==2.0.0rc2"
+    assert entry.run_seed == "7"
+    assert entry.primary_metric_value == "-0.146818181818628"
+    assert entry.decision == "fail"
 
 
 def test_leo_preregistration_registry_row_declares_no_runtime_evidence() -> None:
@@ -241,8 +246,15 @@ def _write_config(
 
 
 def _registry_row() -> dict[str, str]:
+    """A still-`specified_not_run` base row (leo_gbpusd_v1) to mutate in
+    isolation; trend_pullback_v1's row is intentionally excluded since it is
+    now a completed, evidence-populated row rather than a blank one."""
     with REGISTRY_PATH.open(encoding="utf-8", newline="") as handle:
-        row = next(csv.DictReader(handle))
+        row = next(
+            item
+            for item in csv.DictReader(handle)
+            if item["strategy_id"] == "leo_gbpusd_v1"
+        )
     return row
 
 

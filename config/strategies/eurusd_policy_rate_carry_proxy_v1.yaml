@@ -1,0 +1,244 @@
+schema_version: 1
+
+family:
+  family_id: eurusd_policy_rate_carry_proxy_v1
+  version: 1.0.0
+  status: preregistered_not_run
+  economic_hypothesis: >-
+    After realistic spot execution costs and a transparently labelled proxy
+    carry accrual, an EUR/USD position aligned with the sign of the lagged
+    ECB-vs-Fed short-rate differential earns positive mean total return
+    during DEVELOPMENT. This is a narrow EUR/USD pair-level policy-rate
+    carry proxy hypothesis. It is NOT a claim about the general
+    cross-sectional FX carry factor, and it is NOT a claim about actual
+    FTMO broker swap economics.
+
+dataset:
+  instrument_id: EUR/USD.DUKASCOPY
+  universe_id: g1_4_fx_usd_liquid_v1
+  universe_plan_sha256: 16c29df7bae3bde0a9e64e2cc7758f158186182a3d7a464347791400abcfff69
+  universe_readiness_sha256: e6d511bb7bbea6b80c42b00c3f1b4c79ea35cd4532d5f71b69ee8f43bea3f8a0
+  partition: development
+  development_start_utc: "2019-03-11T00:00:00Z"
+  development_end_exclusive_utc: "2023-04-11T00:00:00Z"
+  rate_source:
+    ecbdfr_raw_file: config/data/policy_rates/ECBDFR_raw.csv
+    ecbdfr_raw_sha256: a9993333c5648a3ee0cfbc6ac4cc925cb6270d9ccecfa32d0db62ea808d57fe4
+    effr_raw_file: config/data/policy_rates/EFFR_raw.csv
+    effr_raw_sha256: 1c53e1aa230fbe2d39275775206b64ad7e56d36c8cd63e572f492278a1c79a73
+    provider: FRED
+    provenance_path: config/data/policy_rates/provenance.json
+    loader: ftmoquant.data.policy_rates.load_policy_rate_history
+    information_lag: one_business_day_forward_filled
+    development_window_differential_sign_never_flips: true
+
+signal:
+  implementation: ftmoquant.strategies.eurusd_policy_rate_carry_proxy.EurusdPolicyRateCarryProxyState
+  rule: sign_of_causal_ecbdfr_minus_effr_differential
+  positive_differential_target: 1
+  negative_differential_target: -1
+  zero_differential_target: 0
+  parameters_or_lookback: none
+  decision_anchor_utc_time: "00:00"
+  decision_anchor_rationale: avoid_colliding_with_17_00_america_new_york_rollover_accrual_window
+  signal_source: ftmoquant.data.policy_rates.causal_differential_series
+
+risk_normalization:
+  type: causal_pre_execution_underlying_vol_target
+  target_annualized_volatility: 0.01
+  implementation: ftmoquant.research.g1.normalization.G1VolatilityNormalizer
+  underlying_instrument: EUR/USD.DUKASCOPY
+  source: completed_bid_ask_midpoint_daily_log_returns
+  daily_observation_semantics: existing_17_00_America_New_York_completed_pair
+  estimator:
+    library_primitive: pandas.Series.ewm.var
+    kind: exponentially_weighted_variance
+    center_of_mass_trading_days: 60.0
+    adjust: true
+    bias: false
+    ignore_na: false
+    minimum_completed_returns: 20
+    annualization_days: 252
+  observation_rule: daily_return_endpoint_information_time_strictly_before_decision
+  warmup_behavior: unavailable_zero_nonzero_exposure
+  future_backfill: forbidden
+  pathological_volatility_behavior: fail_closed_zero_nonzero_exposure
+  exposure_formula: directional_signal_times_0.01_divided_by_ex_ante_annualized_volatility
+  sizing_refresh_rule: resized_daily_even_if_direction_unchanged
+  base_units_per_unit_exposure: "100000"
+  target_quantity_rule: desired_exposure_times_base_units_before_native_execution
+  ftmo_or_g4_sizing: false
+
+proxy_carry:
+  native_module: nautilus_trader.backtest.FXRolloverInterestModule
+  wiring: ftmoquant.backtest.execution_harness.RolloverConfig
+  mode: fx_rollover_interest
+  calibration_status: proxy
+  native_resolution: monthly
+  bucketing_rule: last_business_day_of_prior_month_causal_value_per_month
+  record_construction: ftmoquant.research.eurusd_policy_rate_carry_proxy_development.build_monthly_interest_rate_inputs
+  record_inputs: raw_ecbdfr_and_effr_rates_not_precomputed_differential
+  sign_convention: module_computed_internally_from_raw_records_no_second_calculation
+  accrual_schedule: existing_frozen_17_00_america_new_york_weekday_trigger_wed_fri_tripled
+  limitation: >-
+    the module's native resolution is monthly, coarser than the strategy's
+    daily one-business-day-lagged signal; this is a disclosed limitation,
+    not silently smoothed over.
+  effective_lag_min_business_days: 1
+  effective_lag_max_calendar_days_approx: 31
+  lag_disclosure: >-
+    for calendar day D in month M, the carry accrual rate used by the
+    native module is the raw ECBDFR/EFFR rate that was causally known as
+    of the last business day of month M-1 (one-business-day lag applied
+    at that cutoff, matching causal_differential_series). Concretely this
+    means the effective information lag of the carry component, as a
+    function of D's position within month M, ranges from a minimum of
+    approximately 1 business day (when D is the 1st of the month, closest
+    to the M-1 cutoff) to a maximum of approximately 1 calendar month
+    minus 1 day, i.e. up to ~31 calendar days (when D is the last day of
+    the month, furthest from the M-1 cutoff). This is strictly coarser
+    than, and must never be confused with, the directional signal's own
+    flat one-business-day lag computed daily by
+    causal_differential_series. No forward-fill or daily record format is
+    supported by the native module (see verified_against below); this
+    monthly-bucket lag is a structural property of the reused native
+    module, not a bug in this family's own code.
+  verified_against:
+    package: nautilus-trader==2.0.0rc2
+    source_commit: cad455e35c4489a3314e6fc9bad5c7b5c103ace8
+    source_file: crates/backtest/src/modules/fx_rollover.rs
+    verified_native_key_formats: ["YYYY-MM", "YYYY-Qn"]
+    daily_records_supported: false
+
+execution_and_costs:
+  engine: existing_nautilus_g0_7_bid_ask_boundary
+  entry_timing_rule: first_eligible_information_time_strictly_after_signal_information_time
+  decision_timing_rule: daily_00_00_utc_decision_anchor
+  max_open_positions: 1
+  stop_loss: none
+  take_profit: none
+  spread: observed_paired_bid_ask
+  cost_stress_multiplier: 1.5
+  cost_stress_scope: variable_execution_cost_component_only_never_the_carry_accrual
+  position_sizing_timing: before_native_order_submission
+  native_cost_quantity_basis: actual_executed_scaled_delta_base_units
+  parallel_backtester: false
+  ftmo_optimization: false
+
+development_folds:
+  version: g1.4b-development-folds-1
+  semantic_sha256: 805687e8657c1482d5f8cff4b513385eebfc6a62795735fd4b390019b2e1fdfe
+  folds:
+    - fold_id: dev_fold_1
+      train_start_utc: "2019-03-11T00:00:00Z"
+      train_end_exclusive_utc: "2020-04-11T00:00:00Z"
+      evaluate_start_utc: "2020-04-11T00:00:00Z"
+      evaluate_end_exclusive_utc: "2021-04-11T00:00:00Z"
+    - fold_id: dev_fold_2
+      train_start_utc: "2019-03-11T00:00:00Z"
+      train_end_exclusive_utc: "2021-04-11T00:00:00Z"
+      evaluate_start_utc: "2021-04-11T00:00:00Z"
+      evaluate_end_exclusive_utc: "2022-04-11T00:00:00Z"
+    - fold_id: dev_fold_3
+      train_start_utc: "2019-03-11T00:00:00Z"
+      train_end_exclusive_utc: "2022-04-11T00:00:00Z"
+      evaluate_start_utc: "2022-04-11T00:00:00Z"
+      evaluate_end_exclusive_utc: "2023-04-11T00:00:00Z"
+
+pnl_decomposition:
+  components: [spot_pnl, execution_cost, proxy_carry_accrual]
+  identity: total_daily_equity_change_equals_spot_pnl_plus_carry_accrual_minus_execution_cost
+  daily_mark_boundary: existing_17_00_america_new_york_completed_pair
+  bracket_marks: ["16:59:59_America/New_York", "17:00:05_America/New_York"]
+  fold_reset: pre_fold_equity_and_cost_excluded_from_fold_metrics
+
+sample_count:
+  fold_metrics_trade_count_field_repurposed_as: eligible_daily_return_observation_count
+  definition: one_eligible_causal_trading_day_marked_total_return_equals_one_evidential_observation
+  is_not_a_trade_count: true
+  count_orders: false
+  count_fills: false
+  count_sign_changes: false
+  count_rebalances_only: false
+
+eligibility:
+  required_fold_count: 3
+  minimum_pooled_eligible_observations: 500
+  minimum_positive_folds: 2
+  gates:
+    - status_is_complete
+    - all_required_folds_present
+    - minimum_pooled_eligible_observations_met
+    - pooled_mean_daily_total_return_gt_zero
+    - pooled_cost_stressed_mean_daily_total_return_gt_zero
+    - strict_majority_of_fold_mean_returns_positive
+    - all_numerical_validity_checks_pass
+  maximum_drawdown_hard_gate: false
+  plateau_hard_gate: false
+  year_concentration_hard_gate: false
+
+production_evaluator:
+  version: eurusd-policy-rate-carry-proxy-v1-development-evaluator-1
+  module: ftmoquant.research.eurusd_policy_rate_carry_proxy_development
+  runner: ftmoquant.research.eurusd_policy_rate_carry_proxy_development.run_eurusd_policy_rate_carry_proxy_development
+  command: uv run python -m ftmoquant.research.eurusd_policy_rate_carry_proxy_development
+  fold_warmup: process_train_start_through_evaluation_without_pre_fold_pnl_in_metrics
+  end_boundary: final_available_tradable_observation_strictly_before_evaluate_end
+  read_beyond_evaluate_end: false
+
+metric_definitions:
+  trade_count: eligible_daily_return_observation_count
+  net_expectancy: pooled_mean_eligible_daily_total_return
+  cost_stressed_expectancy: pooled_mean_eligible_daily_total_return_after_1_5x_execution_cost_stress
+  net_daily_mean: arithmetic_mean_of_eligible_daily_total_returns
+  sharpe: existing_ftmoquant_annualized_daily_sharpe_sqrt_252
+  drawdown: existing_ftmoquant_compounded_daily_return_maximum_drawdown
+  yearly_attribution: calendar_year_net_return_contribution
+  rate_regime_attribution: differential_sign_epoch_net_return_contribution
+  spot_pnl_contribution: pooled_spot_pnl_component_of_total_return
+  carry_accrual_contribution: pooled_carry_accrual_component_of_total_return
+  execution_cost_contribution: pooled_execution_cost_component_of_total_return
+  dependence_aware_confidence_interval: diagnostic_stationary_bootstrap_not_hard_gated
+
+parameter_family:
+  mode: baseline_only
+  parameter_count: 0
+  design_note: >-
+    Exactly one configuration is evaluated. No parameter grid, no search,
+    no selector, and no plateau/neighbour analysis is performed for this
+    family.
+
+search:
+  mode: baseline_only
+  optuna: false
+  parameter_grid_frozen_before_returns: true
+  select_candidate_invoked: false
+  assess_plateau_invoked: false
+
+sealed_partitions:
+  validation: locked_until_[2023-04-11T00:00:00Z,_2024-08-21T00:00:00Z)
+  final_holdout: locked
+  strategy_returns_accessed: false
+
+lineage:
+  prior_families_all_development_burned: true
+  lineage_inventory_path: docs/research/strategy_lineage_inventory.md
+  new_information_source: true
+  new_information_source_description: policy_rate_differential_never_previously_used_as_alpha_signal
+  prior_failed_hypotheses_reused_at: mechanism_category_level_only
+  prior_parameters_reused: false
+
+limitations:
+  does_not_establish_broad_cross_sectional_fx_carry_factor: true
+  does_not_establish_actual_ftmo_broker_swap_replication: true
+  rollover_module_native_resolution: monthly
+
+reuse:
+  raw_target_enum: ftmoquant.strategies.ts_momentum.RawDirectionalTarget
+  volatility_normalizer: ftmoquant.research.g1.normalization.G1VolatilityNormalizer
+  rollover_module: nautilus_trader.backtest.FXRolloverInterestModule
+  execution_engine: existing_nautilus_g0_7_bid_ask_boundary
+  fold_definitions: ftmoquant.research.stage_g.frozen_development_folds
+  parallel_execution_engine: false
+
+semantic_sha256: "d200492d6c210e2b0968f8a9731fea00a6a2f273401dbce63011cf5d0cd14eae"

@@ -1,12 +1,33 @@
 # eurusd_session_range_expansion_v1 — preregistration
 
-Status: `preregistered_not_run`. The authoritative machine-readable source of
-truth is
+Status: **VALIDATION_REJECTED (closed)**. The authoritative machine-readable
+source of truth is
 [`config/strategies/eurusd_session_range_expansion_v1.yaml`](../../config/strategies/eurusd_session_range_expansion_v1.yaml),
 with semantic SHA-256
-`3fc1fd836fdfe6999a0ff370e7285752768078e70dca9547723a5772f8a16585`. No
-DEVELOPMENT return, validation row, or final-holdout row was accessed while
-freezing it.
+`3fc1fd836fdfe6999a0ff370e7285752768078e70dca9547723a5772f8a16585`.
+
+## Validation decision record
+
+The frozen one-shot validation of the selected DEVELOPMENT trial
+`cce6c53bd97b188ae3bf735f3ce52b9bfbdc3dc2ff7aaa456a40758a21b4bc69`
+(`breakout_window_end=11:00`, `scheduled_exit=17:00`) ran on the sealed
+validation partition `[2023-04-11T00:00:00Z, 2024-08-21T00:00:00Z)` (498
+days). It executed 65 completed session-breakout round trips (≥ 50
+required) but failed four of the six frozen PASS gates: net return
+`-0.48637%`, 1.5×-cost-stressed return `-0.51974%`, net expectancy
+`-7.4826e-05` (`≈ -0.748 bp/trade`), and stressed expectancy `-7.9961e-05`
+(`≈ -0.800 bp/trade`) were all non-positive. Diagnostic-only figures: Sharpe
+`-0.6082` (vs. DEVELOPMENT mean fold Sharpe `+0.4878`), maximum drawdown
+`1.129%` (vs. DEVELOPMENT `1.525%`). Yearly net expectancy was negative in
+2023 (`-0.005531`) and marginally positive in 2024 (`+0.000667`).
+
+**Outcome: `VALIDATION_REJECTED`.** This is a terminal record: no alternate
+DEVELOPMENT cell of the 9-cell grid was validated, no V2 was created, the
+final holdout was not accessed (`final_holdout_accessed: false`), and
+DEVELOPMENT was not rerun (its three frozen artifacts remain byte-identical
+to the DEVELOPMENT report). See
+[`g1/outcomes.py`](../../src/ftmoquant/research/g1/outcomes.py)'s
+`EURUSD_SESSION_RANGE_EXPANSION_V1_OUTCOME` for the formal outcome record.
 
 ## Context
 
