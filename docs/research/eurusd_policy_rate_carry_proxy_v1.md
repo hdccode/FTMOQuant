@@ -1,10 +1,67 @@
 # eurusd_policy_rate_carry_proxy_v1 — preregistration
 
-Status: **preregistered_not_run**. The authoritative machine-readable source
-of truth is
+Status: **DEVELOPMENT_CANDIDATE_SELECTED** (real DEVELOPMENT returns have
+been observed; validation and final holdout remain locked). The
+authoritative machine-readable source of truth for the frozen
+preregistration is
 [`config/strategies/eurusd_policy_rate_carry_proxy_v1.yaml`](../../config/strategies/eurusd_policy_rate_carry_proxy_v1.yaml),
 with semantic SHA-256
 `b6b21d83e71e06c371645ea3dce33178e8168645c11d89c3f5ec63971c0023f9`.
+
+## Post-run integrity audit
+
+The real DEVELOPMENT result (commit `62fdfcd9726f7cdde2e1c431f98148c9916c4995`,
+artifact `.artifacts/g1_4h/eurusd_policy_rate_carry_proxy_v1/development_run/development_result.json`,
+SHA-256 `f44de295580517c9678b95d3c557e9f4a6c3b3df838df061656f2151029d5988`)
+was audited post-run without a rerun, without recomputing returns from
+prices, and without accessing validation or final holdout. The full,
+deterministic audit record is
+[`post_run_integrity_audit.json`](../../.artifacts/g1_4h/eurusd_policy_rate_carry_proxy_v1/development_run/post_run_integrity_audit.json)
+(SHA-256 `3835ec98f107d303f321740e65e3487deb10ad1d396db0440c41584ef944a723`).
+Summary:
+
+- **Sample-count bug (confirmed):** `pooled_observation_count=2392` included
+  pre-evaluation warm-up days from each fold's `train_start_utc` onward,
+  which carry exactly zero exposure/P&L by construction (no instruction
+  exists before `compare_start_utc`). The corrected, timestamp-metadata-only
+  pooled observation count is **777** (258 + 259 + 260 across the three
+  folds), still `>= 500`.
+- **Carry-attribution bug (confirmed, diagnostic-only):** `carry_accrual`
+  was computed as an equity diff (`balance + unrealized_pnl`) across the
+  pre/post rollover marks, which conflates the native rollover cash event
+  with any intervening bid/ask price movement. Proven algebraically that
+  `stressed_daily_total_return` reduces to `total_equity_change - 0.5 *
+  execution_cost` independent of the carry/spot split, so this bug cannot
+  affect `total_equity_change`, any pooled/fold mean, or any hard gate.
+  `carry_accrual_contribution`, `spot_pnl_contribution`, and
+  `carry_contribution_ratio` in the original artifact are marked
+  `INVALID_DIAGNOSTIC`; `net_cumulative_return`, `gate_passed`, and
+  `positive_fold_count` are unaffected.
+- **Corrected pooled means** (derived only from the already-persisted
+  aggregate component totals divided by the corrected count, never from
+  reopened prices): mean daily total return `1.7527284427284429e-05`,
+  stressed mean daily total return `1.7465540498705657e-05` — both
+  strictly *more* positive than originally reported, and both hard gates
+  (A: pooled mean > 0, B: pooled stressed mean > 0) hold under correction.
+  Gate C (`positive_fold_count >= 2/3`) is proven invariant algebraically
+  (sign of a fold's mean cannot change when only its zero-valued terms are
+  removed from the denominator).
+- **Fixes applied for future validation runs only** (the audited
+  DEVELOPMENT result itself was neither rerun nor edited): `_EquityMark`
+  gained a `balance` field; `daily_decompositions_from_equity_marks` now
+  isolates carry via `post.balance - pre.balance` with a guard against a
+  fill landing inside the rollover bracket; `run_eurusd_policy_rate_carry_proxy_development`
+  now filters decompositions to each fold's own `[compare_start_utc,
+  compare_end_exclusive_utc)` via the new `_decompositions_in_evaluate_window`
+  helper before any metric/gate computation. Neither fix required a
+  semantic SHA change (both align the implementation with the
+  already-frozen `sample_count`/`pnl_decomposition` preregistration
+  semantics, rather than changing the contract itself).
+- **Missing fold reporting (limitation, not a bug):** the completed
+  artifact persisted only pooled metrics and `positive_fold_count`, not
+  individual `FoldMetrics`. This is recorded as a reporting limitation for
+  future families to fix (persist detailed metric structures before
+  process exit); it was not resolved by rerunning DEVELOPMENT.
 
 ## Semantic SHA change: scheduling-collision fix
 

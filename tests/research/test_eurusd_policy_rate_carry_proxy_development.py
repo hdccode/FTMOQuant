@@ -373,10 +373,30 @@ def test_daily_decompositions_pair_consecutive_post_marks() -> None:
         return int(stamp.timestamp() * 1_000_000_000)
 
     marks = [
-        _EquityMark(ns(8) - 60_000_000_000, Decimal("100000"), Decimal("50")),
-        _EquityMark(ns(8), Decimal("100010"), Decimal("50")),  # Mon pre/post
-        _EquityMark(ns(9) - 60_000_000_000, Decimal("100010"), Decimal("50")),
-        _EquityMark(ns(9), Decimal("100020"), Decimal("50")),  # Tue pre/post
+        _EquityMark(
+            ns(8) - 60_000_000_000,
+            Decimal("100000"),
+            Decimal("50"),
+            Decimal("100000"),
+        ),
+        _EquityMark(
+            ns(8),
+            Decimal("100010"),
+            Decimal("50"),
+            Decimal("100010"),
+        ),  # Mon pre/post
+        _EquityMark(
+            ns(9) - 60_000_000_000,
+            Decimal("100010"),
+            Decimal("50"),
+            Decimal("100010"),
+        ),
+        _EquityMark(
+            ns(9),
+            Decimal("100020"),
+            Decimal("50"),
+            Decimal("100020"),
+        ),  # Tue pre/post
     ]
     decompositions = daily_decompositions_from_equity_marks(marks)
     assert len(decompositions) == 1
@@ -388,9 +408,150 @@ def test_daily_decompositions_pair_consecutive_post_marks() -> None:
 
 
 def test_daily_decompositions_reject_unpaired_marks() -> None:
-    marks = [_EquityMark(0, Decimal("100000"), Decimal("0"))]
+    marks = [_EquityMark(0, Decimal("100000"), Decimal("0"), Decimal("100000"))]
     with pytest.raises(EurusdPolicyRateCarryProxyEvaluationError):
         daily_decompositions_from_equity_marks(marks)
+
+
+def test_carry_isolation_uses_balance_diff_not_equity_diff_under_price_movement() -> (
+    None
+):
+    """Section 8 fix proof: carry must isolate the native rollover cash
+    event from any intervening bid/ask mark-to-market movement between the
+    pre- and post-rollover marks.
+
+    A flat-price fixture cannot distinguish the old (buggy) equity-diff
+    formula from the new (fixed) balance-diff formula, because unrealized
+    P&L never changes when price never moves -- that is exactly why the
+    original synthetic quadrant tests, which held price flat throughout,
+    never caught this. This fixture deliberately moves price between the
+    pre- and post-mark of the Tuesday pair, so the two formulas would
+    disagree if the bug were still present.
+    """
+
+    def ns(day: int) -> int:
+        stamp = datetime(2024, 1, day, 22, 0, tzinfo=UTC)
+        return int(stamp.timestamp() * 1_000_000_000)
+
+    marks = [
+        # Monday pre/post: flat, no position, establishes the anchor.
+        _EquityMark(
+            ns(8) - 60_000_000_000,
+            Decimal("100000"),
+            Decimal("50"),
+            Decimal("100000"),
+        ),
+        _EquityMark(ns(8), Decimal("100000"), Decimal("50"), Decimal("100000")),
+        # Tuesday pre: unrealized P&L is 0 relative to balance (no drift yet).
+        _EquityMark(
+            ns(9) - 60_000_000_000,
+            Decimal("100000"),
+            Decimal("50"),
+            Decimal("100000"),
+        ),
+        # Tuesday post: balance rose by 4 (the true native rollover credit,
+        # a cash event) AND price moved between pre and post, adding +50 of
+        # unrealized P&L to equity that has nothing to do with rollover.
+        # cumulative_cost is unchanged (50 -> 50): no fill was realized
+        # inside this bracket, isolating the price-movement effect alone.
+        _EquityMark(ns(9), Decimal("100054"), Decimal("50"), Decimal("100004")),
+    ]
+    decompositions = daily_decompositions_from_equity_marks(marks)
+    assert len(decompositions) == 1
+    only = decompositions[0]
+
+    # total_equity_change is a pure post-to-post equity diff -- unaffected
+    # by the carry formula, still correctly includes the full +54 move.
+    assert only.total_equity_change == Decimal("54")
+    # carry_accrual must be the balance-only diff (4), NOT the contaminated
+    # equity diff (54) that the pre-fix formula would have produced.
+    assert only.carry_accrual == Decimal("4")
+    assert only.carry_accrual != only.total_equity_change
+    assert only.execution_cost == Decimal("0")
+    # spot_pnl (the residual) correctly absorbs the price-driven +50 move
+    # that does not belong to carry: total(54) - carry(4) + cost(0) = 50.
+    assert only.spot_pnl == Decimal("50")
+    # Decomposition identity still holds exactly.
+    assert only.spot_pnl + only.carry_accrual - only.execution_cost == (
+        only.total_equity_change
+    )
+    # Stress still reduces to total - 0.5*cost regardless of the carry
+    # formula (Section 7's algebraic invariance, reconfirmed post-fix).
+    assert stressed_daily_total_return(only) == only.total_equity_change - (
+        Decimal("0.5") * only.execution_cost
+    )
+
+
+def test_carry_isolation_rejects_a_fill_realized_inside_the_bracket() -> None:
+    """If cumulative_cost changes between the pre- and post-rollover mark,
+    an order fill was realized inside the bracket -- balance-diff carry
+    isolation would be contaminated by that fill's own cash effect, so this
+    must fail closed rather than silently misattribute."""
+
+    def ns(day: int) -> int:
+        stamp = datetime(2024, 1, day, 22, 0, tzinfo=UTC)
+        return int(stamp.timestamp() * 1_000_000_000)
+
+    marks = [
+        _EquityMark(
+            ns(8) - 60_000_000_000,
+            Decimal("100000"),
+            Decimal("50"),
+            Decimal("100000"),
+        ),
+        _EquityMark(ns(8), Decimal("100000"), Decimal("50"), Decimal("100000")),
+        # cumulative_cost changes from 50 to 55 within this single pair --
+        # a fill was realized inside the pre/post bracket.
+        _EquityMark(
+            ns(9) - 60_000_000_000,
+            Decimal("100000"),
+            Decimal("50"),
+            Decimal("100000"),
+        ),
+        _EquityMark(ns(9), Decimal("100004"), Decimal("55"), Decimal("100004")),
+    ]
+    with pytest.raises(EurusdPolicyRateCarryProxyEvaluationError):
+        daily_decompositions_from_equity_marks(marks)
+
+
+# ---------------------------------------------------------------------------
+# Future-validation sample-window filtering (Section 9): warm-up
+# decompositions (dated before a fold's own evaluate window) must never
+# enter the sample count, metrics, or attribution.
+# ---------------------------------------------------------------------------
+
+
+def test_decompositions_in_evaluate_window_excludes_warmup_dates() -> None:
+    from ftmoquant.research.eurusd_policy_rate_carry_proxy_development import (
+        _decompositions_in_evaluate_window,
+    )
+    from ftmoquant.research.stage_g import frozen_development_folds
+
+    fold = frozen_development_folds().folds[0]
+    warmup_date = fold.compare_start_utc.date() - timedelta(days=5)
+    in_window_date = fold.compare_start_utc.date()
+    last_in_window_date = fold.compare_end_exclusive_utc.date() - timedelta(days=1)
+    after_window_date = fold.compare_end_exclusive_utc.date()
+
+    def _zero_decomposition(as_of: date) -> Any:
+        return decompose_daily_pnl(
+            as_of,
+            total_equity_change=Decimal("0"),
+            carry_accrual=Decimal("0"),
+            execution_cost=Decimal("0"),
+        )
+
+    decompositions = (
+        _zero_decomposition(warmup_date),
+        _zero_decomposition(in_window_date),
+        _zero_decomposition(last_in_window_date),
+        _zero_decomposition(after_window_date),
+    )
+    filtered = _decompositions_in_evaluate_window(decompositions, fold)
+    filtered_dates = {item.as_of_date for item in filtered}
+    assert filtered_dates == {in_window_date, last_in_window_date}
+    assert warmup_date not in filtered_dates
+    assert after_window_date not in filtered_dates
 
 
 # ---------------------------------------------------------------------------

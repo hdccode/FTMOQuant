@@ -12,6 +12,7 @@ class CandidateOutcome(StrEnum):
     ROBUSTNESS_REJECTED = "ROBUSTNESS_REJECTED"
     DEPLOYMENT_FEASIBILITY_BLOCKED = "DEPLOYMENT_FEASIBILITY_BLOCKED"
     IMPLEMENTATION_OR_DATA_FAILURE = "IMPLEMENTATION_OR_DATA_FAILURE"
+    DEVELOPMENT_CANDIDATE_SELECTED = "DEVELOPMENT_CANDIDATE_SELECTED"
 
 
 @dataclass(frozen=True, slots=True)
@@ -138,5 +139,37 @@ EURUSD_TSM_V1_OUTCOME = CandidateOutcomeRecord(
         "-0.350 bp/transition, Sharpe -0.6776, max drawdown 1.5258%; four of "
         "six frozen PASS gates failed (net return, stressed return, net "
         "expectancy, stressed expectancy)"
+    ),
+)
+
+EURUSD_POLICY_RATE_CARRY_PROXY_V1_OUTCOME = CandidateOutcomeRecord(
+    candidate_id="eurusd_policy_rate_carry_proxy_v1",
+    outcome=CandidateOutcome.DEVELOPMENT_CANDIDATE_SELECTED,
+    alpha_evaluated=True,
+    reason=(
+        "real DEVELOPMENT run at commit 62fdfcd9726f7cdde2e1c431f98148c9916c4995 "
+        "(artifact "
+        ".artifacts/g1_4h/eurusd_policy_rate_carry_proxy_v1/development_run/"
+        "development_result.json, sha256 "
+        "f44de295580517c9678b95d3c557e9f4a6c3b3df838df061656f2151029d5988): "
+        "gate_passed=true, positive_fold_count=2/3. A post-run integrity "
+        "audit (no rerun, no price reads, no validation/holdout access; see "
+        "post_run_integrity_audit.json, sha256 "
+        "3835ec98f107d303f321740e65e3487deb10ad1d396db0440c41584ef944a723) "
+        "confirmed two implementation defects -- pooled_observation_count "
+        "included zero-P&L pre-evaluation warm-up days (corrected pooled "
+        "count from timestamp metadata: 777, still >=500) and carry_accrual "
+        "was contaminated by intraday mark-to-market movement between the "
+        "pre/post rollover marks (carry_accrual_contribution, "
+        "spot_pnl_contribution, and carry_contribution_ratio in the "
+        "original artifact are INVALID_DIAGNOSTIC) -- and proved "
+        "algebraically that neither defect can alter the sign of any "
+        "frozen hard gate (corrected pooled mean 1.7527284427284429e-05 and "
+        "corrected stressed mean 1.7465540498705657e-05 are both more "
+        "positive than originally reported; positive_fold_count is sign- "
+        "invariant under removal of zero-valued warm-up terms). Classified "
+        "DEVELOPMENT_CANDIDATE_SELECTED rather than ALPHA_REJECTED because "
+        "both issues are implementation/reporting defects, not an alpha "
+        "result. Validation and final holdout remain locked"
     ),
 )

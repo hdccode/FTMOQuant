@@ -93,6 +93,7 @@ def test_failure_taxonomy_and_frozen_carver_metadata() -> None:
         "ROBUSTNESS_REJECTED",
         "DEPLOYMENT_FEASIBILITY_BLOCKED",
         "IMPLEMENTATION_OR_DATA_FAILURE",
+        "DEVELOPMENT_CANDIDATE_SELECTED",
     }
     assert CARVER_V1_OUTCOME.candidate_id == "carver_trend_carry_ftmo5_v1"
     assert CARVER_V1_OUTCOME.outcome is (

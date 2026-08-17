@@ -733,6 +733,7 @@ class _EquityMark:
     information_time_ns: int
     equity: Decimal
     cumulative_cost: Decimal
+    balance: Decimal
 
 
 class _PolicyRateCarryProxyExecutor(Strategy):
@@ -880,14 +881,15 @@ class _PolicyRateCarryProxyExecutor(Strategy):
         account = self.cache.account_for_venue(self._instrument.id.venue)
         if account is None:
             raise RuntimeError("native account unavailable")
-        balance = account.balance_total(Currency.from_str("USD"))
-        if balance is None:
+        balance_money = account.balance_total(Currency.from_str("USD"))
+        if balance_money is None:
             raise RuntimeError("native USD balance unavailable")
-        equity = balance.as_decimal()
+        balance = balance_money.as_decimal()
+        equity = balance
         for position in cast(list[Position], self.cache.positions_open()):
             mark = bid if position.is_long else ask
             equity += position.unrealized_pnl(mark).as_decimal()
-        return _EquityMark(info, equity, self.realized_variable_cost)
+        return _EquityMark(info, equity, self.realized_variable_cost, balance)
 
     def on_stop(self) -> None:
         return
@@ -914,7 +916,26 @@ def daily_decompositions_from_equity_marks(
     for index in range(1, len(pairs)):
         previous_post = pairs[index - 1][1]
         pre, post = pairs[index]
-        carry_accrual = post.equity - pre.equity
+        # Carry isolation: native FXRolloverInterestModule adjustments post
+        # to account *balance* (realized cash), never to unrealized P&L;
+        # balance_total() is therefore untouched by intraday bid/ask
+        # mark-to-market movement between the pre- and post-rollover marks,
+        # unlike an equity (balance + unrealized) diff, which conflates the
+        # rollover cash event with any spot price movement inside the
+        # bracket. A synthetic flat-price fixture cannot distinguish these
+        # two formulas (unrealized P&L is constant either way when price
+        # never moves), which is why the earlier equity-diff formula's
+        # contamination went undetected until a changing-price fixture
+        # (or real market data) was used.
+        if pre.cumulative_cost != post.cumulative_cost:
+            raise EurusdPolicyRateCarryProxyEvaluationError(
+                "an order fill was realized inside the pre/post rollover "
+                "mark bracket -- carry isolation via balance-diff would be "
+                "contaminated by that fill's realized cost; the 00:00 UTC "
+                "decision anchor is designed to prevent this, so this "
+                "indicates a scheduling assumption was violated"
+            )
+        carry_accrual = post.balance - pre.balance
         total_equity_change = post.equity - previous_post.equity
         execution_cost = post.cumulative_cost - previous_post.cumulative_cost
         result.append(
@@ -987,6 +1008,26 @@ def _run_native_fold(
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
+
+
+def _decompositions_in_evaluate_window(
+    decompositions: Sequence[DailyPnlDecomposition], fold: Any
+) -> tuple[DailyPnlDecomposition, ...]:
+    """Filter to observations dated inside ``[compare_start, compare_end)``.
+
+    Warm-up decompositions (dated before the fold's own evaluate window)
+    may exist upstream to prime causal state, but must never enter the
+    sample count, metrics, or attribution -- see the frozen
+    ``sample_count`` preregistration semantics.
+    """
+
+    start_date = fold.compare_start_utc.date()
+    end_date_exclusive = fold.compare_end_exclusive_utc.date()
+    return tuple(
+        item
+        for item in decompositions
+        if start_date <= item.as_of_date < end_date_exclusive
+    )
 
 
 def _months_spanned(start: date, end: date) -> set[tuple[int, int]]:
@@ -1297,7 +1338,7 @@ def run_eurusd_policy_rate_carry_proxy_development(
             evaluate_start_ns=_ns(fold.compare_start_utc),
             evaluate_end_exclusive_ns=_ns(fold.compare_end_exclusive_utc),
         )
-        decompositions = _run_native_fold(
+        raw_decompositions = _run_native_fold(
             fold_id=fold.fold_id,
             instrument=instrument,
             minute_bars=minute_bars,
@@ -1307,6 +1348,16 @@ def run_eurusd_policy_rate_carry_proxy_development(
             start_ns=_ns(fold.train_start_utc),
             end_exclusive_ns=_ns(fold.compare_end_exclusive_utc),
         )
+        # The engine runs from train_start (warm-up, to prime causal EWMA
+        # volatility and rate state) through compare_end, so equity marks
+        # -- and therefore decompositions -- span that entire range. Only
+        # observations dated inside the fold's own evaluate window are
+        # eligible daily total-return samples; pre-evaluation warm-up days
+        # carry exactly zero exposure/P&L by construction (no instruction
+        # exists before compare_start, so `_target_units` never leaves
+        # zero), but must still be excluded from the sample count, metrics,
+        # and attribution -- warm-up may only initialize causal state.
+        decompositions = _decompositions_in_evaluate_window(raw_decompositions, fold)
         fold_metrics.append(
             fold_metrics_from_daily_decompositions(fold.fold_id, decompositions)
         )
