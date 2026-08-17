@@ -1,12 +1,37 @@
 # eurusd_liquidity_shock_reversion_v1 — preregistration
 
-Status: `preregistered_not_run`. The authoritative machine-readable source of
-truth is
+Status: **DEVELOPMENT failed / retired (`ALPHA_REJECTED`)**. The
+authoritative machine-readable source of truth is
 [`config/strategies/eurusd_liquidity_shock_reversion_v1.yaml`](../../config/strategies/eurusd_liquidity_shock_reversion_v1.yaml),
 with semantic SHA-256
-`50cd4e5460e488e06b33edd48fdb482a549199bcca4daa48625ce74da3865ad8`. No
-DEVELOPMENT return, validation row, or final-holdout row was accessed while
-freezing it.
+`50cd4e5460e488e06b33edd48fdb482a549199bcca4daa48625ce74da3865ad8`.
+
+## DEVELOPMENT decision record
+
+The frozen exact 36-cell DEVELOPMENT grid ran to completion: 36/36
+configurations complete, 0 invalid, 0 failed. **0/36 cells were pooled
+net-profitable, 0/36 were pooled cost-stressed-profitable, and 0/36 met all
+hard eligibility gates** (pooled net expectancy `> 0`, pooled cost-stressed
+expectancy `> 0`, `>= 2/3` positive folds, `>= 100` pooled trades). No
+candidate was selected. Mean per-fold Sharpe ranged from `-17.38` to `-2.37`
+across the grid; every cell's pooled net and cost-stressed expectancy were
+negative. The overlapping `(baseline_prior_returns=60, shock_multiple=5.0,
+hold_eligible_minutes=15)` cell — matching the retired
+`liquidity_shock_reversion_v1` baseline — was retained unmodified in the
+grid and produced pooled net expectancy `-1.6465e-05`, pooled stressed
+expectancy `-2.5876e-05`, `0/3` positive folds; it failed the same gates as
+every other cell, with no special treatment.
+
+Outcome: `ALPHA_REJECTED`. This is a terminal DEVELOPMENT record: it does
+not advance to validation or final holdout, and it introduces no post-hoc
+grid change, strategy inversion, tuning, or V2. See
+`EURUSD_LIQUIDITY_SHOCK_REVERSION_V1_OUTCOME` in
+[`g1/outcomes.py`](../../src/ftmoquant/research/g1/outcomes.py) and
+`.artifacts/g1_4h/eurusd_liquidity_shock_reversion_v1/development_run/` for
+the deterministic artifacts (`trial_registry.json` SHA-256
+`2115390e28eaf4bd78afafa47d0e61c5fac2aa7c025dfb66f99b93b4e26fc22b`,
+`development_result.json` SHA-256
+`c69682804fe5ee34735b2cf2b9ae3ada78c45f103bcb6449c94cda5f0f772f18`).
 
 ## Context
 

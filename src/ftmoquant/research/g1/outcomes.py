@@ -29,6 +29,24 @@ CARVER_V1_OUTCOME = CandidateOutcomeRecord(
     reason="frozen aggregate Swing margin constraint breached before returns",
 )
 
+EURUSD_LIQUIDITY_SHOCK_REVERSION_V1_OUTCOME = CandidateOutcomeRecord(
+    candidate_id="eurusd_liquidity_shock_reversion_v1",
+    outcome=CandidateOutcome.ALPHA_REJECTED,
+    alpha_evaluated=True,
+    reason=(
+        "exact 36-cell DEVELOPMENT grid (baseline_prior_returns x "
+        "shock_multiple x hold_eligible_minutes) over the frozen 3-fold "
+        "DEVELOPMENT window: 36/36 configurations completed, 0/36 pooled "
+        "net-profitable, 0/36 pooled cost-stressed-profitable, 0/36 met all "
+        "hard eligibility gates (pooled expectancy > 0, stressed pooled "
+        "expectancy > 0, >=2/3 positive folds, >=100 pooled trades); no "
+        "candidate selected. The overlapping 60/5.0/15 cell (matching the "
+        "retired liquidity_shock_reversion_v1 baseline) was retained "
+        "unmodified in the grid and failed the same gates as every other "
+        "cell"
+    ),
+)
+
 EURUSD_TSM_V1_OUTCOME = CandidateOutcomeRecord(
     candidate_id="eurusd_tsm_v1",
     outcome=CandidateOutcome.VALIDATION_REJECTED,
