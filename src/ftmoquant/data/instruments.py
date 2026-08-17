@@ -165,6 +165,44 @@ GBPUSD_SPEC = InstrumentSpec(
     session_policy_id="dukascopy-fx-ny-close-v1",
 )
 
+AUDUSD_SPEC = InstrumentSpec(
+    dataset_symbol="AUDUSD",
+    instrument_id="AUD/USD.DUKASCOPY",
+    base_currency="AUD",
+    quote_currency="USD",
+    price_precision=5,
+    price_increment="0.00001",
+    size_precision=8,
+    size_increment="0.00000001",
+    session_policy_id="dukascopy-fx-ny-close-v1",
+)
+
+#: JPY-quoted pairs conventionally carry 3 decimal places (2 major + 1
+#: fractional pip), unlike the 5-decimal quoting used by the other majors.
+USDJPY_SPEC = InstrumentSpec(
+    dataset_symbol="USDJPY",
+    instrument_id="USD/JPY.DUKASCOPY",
+    base_currency="USD",
+    quote_currency="JPY",
+    price_precision=3,
+    price_increment="0.001",
+    size_precision=8,
+    size_increment="0.00000001",
+    session_policy_id="dukascopy-fx-ny-close-v1",
+)
+
+USDCHF_SPEC = InstrumentSpec(
+    dataset_symbol="USDCHF",
+    instrument_id="USD/CHF.DUKASCOPY",
+    base_currency="USD",
+    quote_currency="CHF",
+    price_precision=5,
+    price_increment="0.00001",
+    size_precision=8,
+    size_increment="0.00000001",
+    session_policy_id="dukascopy-fx-ny-close-v1",
+)
+
 
 def to_nautilus_bars(
     rows: Sequence[SourceBar],

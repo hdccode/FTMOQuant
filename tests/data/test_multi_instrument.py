@@ -21,7 +21,11 @@ from ftmoquant.data.canonical_source import (
 from ftmoquant.data.derived_bars import derive_instrument_bars
 from ftmoquant.data.dukascopy import SourceBar
 from ftmoquant.data.instruments import (
+    AUDUSD_SPEC,
+    EURUSD_SPEC,
     GBPUSD_SPEC,
+    USDCHF_SPEC,
+    USDJPY_SPEC,
     InstrumentSpec,
     InstrumentSpecValidationError,
     to_nautilus_bars,
@@ -45,6 +49,7 @@ from ftmoquant.data.universe_readiness import (
 )
 
 PLAN = Path("config/data/g1_4_fx_usd_liquid_v1.yaml")
+MAJORS_PLAN = Path("config/data/g1_4_fx_majors_v1.yaml")
 LEGACY_PLAN = Path("config/data/eurusd_research_v1.yaml")
 REVISION = "bf19dbd89c732f010e20db7c148922ba02b2e33b"
 DAY = datetime(2019, 3, 11, tzinfo=UTC)
@@ -77,6 +82,55 @@ def test_universe_plan_is_ordered_strict_and_legacy_hash_is_unchanged() -> None:
     assert load_research_data_plan(LEGACY_PLAN).semantic_sha256 == (
         "3f45f6b7b896f1bf7922c9c743051857847d156d2c4fad6a35aa8307c9a0e365"
     )
+
+
+def test_new_majors_instrument_specs_validate_and_build_bar_types() -> None:
+    for spec, dataset_symbol in (
+        (AUDUSD_SPEC, "AUDUSD"),
+        (USDCHF_SPEC, "USDCHF"),
+        (USDJPY_SPEC, "USDJPY"),
+    ):
+        spec.validate()
+        assert spec.dataset_symbol == dataset_symbol
+        assert spec.bar_type(minutes=30, side="BID", aggregation="INTERNAL") == (
+            f"{spec.instrument_id}-30-MINUTE-BID-INTERNAL"
+        )
+        assert spec.bar_type(minutes=60, side="ASK", aggregation="INTERNAL") == (
+            f"{spec.instrument_id}-1-HOUR-ASK-INTERNAL"
+        )
+
+
+def test_majors_universe_plan_admits_non_usd_quote_pairs() -> None:
+    majors = load_research_universe_plan(MAJORS_PLAN)
+
+    assert majors.universe_id == "g1_4_fx_majors_v1"
+    assert tuple(item.instrument_id for item in majors.instruments) == (
+        "EUR/USD.DUKASCOPY",
+        "GBP/USD.DUKASCOPY",
+        "AUD/USD.DUKASCOPY",
+        "USD/CHF.DUKASCOPY",
+        "USD/JPY.DUKASCOPY",
+    )
+    assert majors.exact_currency_set == ("AUD", "CHF", "EUR", "GBP", "JPY", "USD")
+    assert majors.instrument("EUR/USD.DUKASCOPY") == EURUSD_SPEC
+    assert majors.instrument("GBP/USD.DUKASCOPY") == GBPUSD_SPEC
+
+    original = load_research_universe_plan(PLAN)
+    assert original.semantic_sha256 == (
+        "16c29df7bae3bde0a9e64e2cc7758f158186182a3d7a464347791400abcfff69"
+    )
+
+
+def test_original_universe_order_lock_is_unaffected_by_majors_support(
+    tmp_path: Path,
+) -> None:
+    document = yaml.safe_load(PLAN.read_text(encoding="utf-8"))
+    document["instruments"] = list(reversed(document["instruments"]))
+    path = tmp_path / "reordered.yaml"
+    path.write_text(yaml.safe_dump(document, sort_keys=False), encoding="utf-8")
+
+    with pytest.raises(ResearchUniversePlanValidationError, match="order"):
+        load_research_universe_plan(path)
 
 
 @pytest.mark.parametrize("mutation", ["duplicate_id", "wrong_precision", "cutoff"])
@@ -218,6 +272,70 @@ def test_synthetic_gbpusd_ingest_derive_and_coverage(tmp_path: Path) -> None:
     coverage = run_instrument_session_coverage(root, GBPUSD_SPEC)
     assert derived.emitted_counts["GBP/USD.DUKASCOPY-1-HOUR-BID-INTERNAL"] == 24
     assert coverage.session_aware_research_ready is True
+
+
+def test_split_materialization_copies_m30_bars_into_both_splits(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """materialize_instrument_split_views must also carry M30 INTERNAL bars,
+    not just the pre-existing 1H/4H, into both DEVELOPMENT and VALIDATION."""
+
+    source_path = tmp_path / "gbp.parquet"
+    timestamps = [
+        int((DAY + timedelta(minutes=index)).timestamp() * 1_000)
+        for index in range(2 * 24 * 60)
+    ]
+    table = pa.table(
+        {
+            "timestamp": pa.array(timestamps, type=pa.int64()),
+            "askPrice": pa.array([1.2502] * len(timestamps), type=pa.float64()),
+            "bidPrice": pa.array([1.25] * len(timestamps), type=pa.float64()),
+            "askVolume": pa.array([2.0] * len(timestamps), type=pa.float64()),
+            "bidVolume": pa.array([3.0] * len(timestamps), type=pa.float64()),
+        }
+    )
+    pq.write_table(table, source_path)
+    repo_path = "data/GBPUSD/2019-03-11_2019-04-09.parquet"
+    canonical_root = tmp_path / "canonical"
+
+    hf.ingest_hf_instrument(
+        PLAN,
+        GBPUSD_SPEC.instrument_id,
+        canonical_root,
+        requested_start=DAY,
+        requested_end_exclusive=DAY + timedelta(days=2),
+        data_use_rights_evidence_sha256="f" * 64,
+        api=FakeApi([repo_path]),
+        downloader=lambda **_kwargs: str(source_path),
+    )
+    derive_instrument_bars(canonical_root, GBPUSD_SPEC)
+
+    plan = load_research_universe_plan(PLAN)
+    small_plan = SimpleNamespace(
+        permitted_start_utc=DAY,
+        permitted_end_exclusive_utc=DAY + timedelta(days=2),
+        development=SimpleNamespace(end=DAY.date()),
+        validation=SimpleNamespace(start=(DAY + timedelta(days=1)).date()),
+        semantic_sha256=plan.semantic_sha256,
+        instrument=plan.instrument,
+    )
+    monkeypatch.setattr(
+        universe_readiness, "load_research_universe_plan", lambda _path: small_plan
+    )
+
+    development, validation = universe_readiness.materialize_instrument_split_views(
+        PLAN, GBPUSD_SPEC.instrument_id, canonical_root, tmp_path / "splits"
+    )
+
+    # 48 windows/day; development's range is close-exclusive at the day
+    # boundary (pre-existing _copy_bar_range convention), so its last
+    # 30-minute window (closing exactly at the boundary) is dropped.
+    for result, expected in ((development, 47), (validation, 48)):
+        payload = json.loads(result.manifest_path.read_text(encoding="utf-8"))
+        bar_counts = payload["bar_counts"]
+        for side in ("BID", "ASK"):
+            key = f"{GBPUSD_SPEC.instrument_id}-30-MINUTE-{side}-INTERNAL"
+            assert bar_counts[key] == expected
 
 
 def test_direct_cache_and_url_are_symbol_specific(tmp_path: Path) -> None:

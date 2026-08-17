@@ -444,6 +444,7 @@ def materialize_instrument_split_views(
         counts: dict[str, int] = {}
         for minutes, aggregation in (
             (1, "EXTERNAL"),
+            (30, "INTERNAL"),
             (60, "INTERNAL"),
             (240, "INTERNAL"),
         ):

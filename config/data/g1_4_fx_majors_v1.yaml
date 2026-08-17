@@ -1,0 +1,83 @@
+universe_id: g1_4_fx_majors_v1
+version: 1
+
+source:
+  market_data_origin: Dukascopy
+  distribution_source: Hugging Face + direct Dukascopy cutoff completion
+  huggingface_repo: mito0o852/dukascopy-ticks
+  huggingface_revision: bf19dbd89c732f010e20db7c148922ba02b2e33b
+  data_use_rights_status: unconfirmed_release_blocker
+
+permitted_range:
+  start_utc: "2019-03-11T00:00:00Z"
+  end_exclusive_utc: "2024-08-21T00:00:00Z"
+  holdout_cutoff_utc: "2024-08-21T00:00:00Z"
+
+splits:
+  development:
+    start: "2019-03-11"
+    end: "2023-04-10"
+    days: 1492
+  validation:
+    start: "2023-04-11"
+    end: "2024-08-20"
+    days: 498
+
+# Full prospective majors universe: every pair confirmed present in this
+# pinned Hugging Face dataset revision. EUR/USD and GBP/USD are repeated
+# here (identical InstrumentSpec values to g1_4_fx_usd_liquid_v1) so this
+# plan is the single complete source of readiness for the majors alpha lab;
+# their raw canonical 1-minute source data is reused as-is from the existing
+# g1_4_fx_usd_liquid_v1 artifacts rather than re-ingested (see the data
+# expansion report for exact reused paths) -- only M30/H1/H4 derivation and
+# split materialization are re-run, into new majors_v1-scoped output roots,
+# so no historical g1_4_fx_usd_liquid_v1 artifact is ever mutated.
+# USD/CAD and NZD/USD are not carried by this dataset revision at all
+# (verified: no data/USDCAD/ or data/NZDUSD/ shards) and are excluded
+# pending a separate decision on acquisition strategy.
+instruments:
+  - dataset_symbol: EURUSD
+    instrument_id: EUR/USD.DUKASCOPY
+    base_currency: EUR
+    quote_currency: USD
+    price_precision: 5
+    price_increment: "0.00001"
+    size_precision: 8
+    size_increment: "0.00000001"
+    session_policy_id: dukascopy-fx-ny-close-v1
+  - dataset_symbol: GBPUSD
+    instrument_id: GBP/USD.DUKASCOPY
+    base_currency: GBP
+    quote_currency: USD
+    price_precision: 5
+    price_increment: "0.00001"
+    size_precision: 8
+    size_increment: "0.00000001"
+    session_policy_id: dukascopy-fx-ny-close-v1
+  - dataset_symbol: AUDUSD
+    instrument_id: AUD/USD.DUKASCOPY
+    base_currency: AUD
+    quote_currency: USD
+    price_precision: 5
+    price_increment: "0.00001"
+    size_precision: 8
+    size_increment: "0.00000001"
+    session_policy_id: dukascopy-fx-ny-close-v1
+  - dataset_symbol: USDCHF
+    instrument_id: USD/CHF.DUKASCOPY
+    base_currency: USD
+    quote_currency: CHF
+    price_precision: 5
+    price_increment: "0.00001"
+    size_precision: 8
+    size_increment: "0.00000001"
+    session_policy_id: dukascopy-fx-ny-close-v1
+  - dataset_symbol: USDJPY
+    instrument_id: USD/JPY.DUKASCOPY
+    base_currency: USD
+    quote_currency: JPY
+    price_precision: 3
+    price_increment: "0.001"
+    size_precision: 8
+    size_increment: "0.00000001"
+    session_policy_id: dukascopy-fx-ny-close-v1

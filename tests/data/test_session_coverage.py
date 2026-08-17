@@ -339,7 +339,7 @@ def _complete_weekday_root(root: Path) -> Path:
     )
     parent_sha256 = hashlib.sha256(parent_path.read_bytes()).hexdigest()
     derived = {
-        "derivation_version": "g0.6-1",
+        "derivation_version": "g0.6-2",
         "parent_g0_5_manifest": coverage.PARENT_MANIFEST_FILENAME,
         "parent_g0_5_manifest_sha256": parent_sha256,
         "parent_ingestion_version": "g0.5-1",

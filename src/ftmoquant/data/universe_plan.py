@@ -20,6 +20,26 @@ HF_REPO_ID = "mito0o852/dukascopy-ticks"
 PINNED_HF_REVISION = "bf19dbd89c732f010e20db7c148922ba02b2e33b"
 HOLDOUT_CUTOFF = datetime(2024, 8, 21, tzinfo=UTC)
 
+#: A second, additive G1.4 universe for majors not carried by the original
+#: frozen ``g1_4_fx_usd_liquid_v1`` plan. Kept fully separate so nothing here
+#: can change the original plan's semantic hash or the frozen artifacts that
+#: already depend on it.
+MAJORS_UNIVERSE_ID = "g1_4_fx_majors_v1"
+MAJORS_UNIVERSE_VERSION = 1
+
+_KNOWN_UNIVERSE_VERSIONS = {
+    UNIVERSE_ID: UNIVERSE_VERSION,
+    MAJORS_UNIVERSE_ID: MAJORS_UNIVERSE_VERSION,
+}
+
+#: Only the original v1 universe has its exact instrument order and
+#: quote-currency restriction frozen; any other known universe id is
+#: validated generically (well-formed, deduplicated instruments only).
+_FROZEN_INSTRUMENT_ORDER = {
+    UNIVERSE_ID: ("EUR/USD.DUKASCOPY", "GBP/USD.DUKASCOPY"),
+}
+_QUOTE_USD_ONLY_UNIVERSES = {UNIVERSE_ID}
+
 
 class ResearchUniversePlanValidationError(ValueError):
     """Raised when a universe can access holdout data or has ambiguous identity."""
@@ -89,9 +109,10 @@ def load_research_universe_plan(path: Path) -> ResearchUniversePlan:
         },
         "universe plan",
     )
+    universe_id = document["universe_id"]
     if (
-        document["universe_id"] != UNIVERSE_ID
-        or document["version"] != UNIVERSE_VERSION
+        universe_id not in _KNOWN_UNIVERSE_VERSIONS
+        or document["version"] != _KNOWN_UNIVERSE_VERSIONS[universe_id]
     ):
         raise ResearchUniversePlanValidationError(
             "universe identity/version is not frozen"
@@ -178,19 +199,22 @@ def load_research_universe_plan(path: Path) -> ResearchUniversePlan:
         raise ResearchUniversePlanValidationError(
             "duplicate instrument IDs or source symbols"
         )
-    if ids != ["EUR/USD.DUKASCOPY", "GBP/USD.DUKASCOPY"]:
+    frozen_order = _FROZEN_INSTRUMENT_ORDER.get(universe_id)
+    if frozen_order is not None and tuple(ids) != frozen_order:
         raise ResearchUniversePlanValidationError(
             "initial universe order is not frozen"
         )
-    if any(item.quote_currency != "USD" for item in instruments):
+    if universe_id in _QUOTE_USD_ONLY_UNIVERSES and any(
+        item.quote_currency != "USD" for item in instruments
+    ):
         raise ResearchUniversePlanValidationError("v1 permits quote-USD pairs only")
 
     semantic_sha256 = hashlib.sha256(
         json.dumps(document, sort_keys=True, separators=(",", ":")).encode()
     ).hexdigest()
     return ResearchUniversePlan(
-        universe_id=UNIVERSE_ID,
-        version=UNIVERSE_VERSION,
+        universe_id=cast(str, universe_id),
+        version=cast(int, document["version"]),
         market_data_origin="Dukascopy",
         distribution_source=cast(str, source["distribution_source"]),
         huggingface_repo=HF_REPO_ID,

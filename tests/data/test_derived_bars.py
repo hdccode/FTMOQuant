@@ -66,6 +66,51 @@ def test_two_hundred_forty_minutes_emit_one_four_hour_bar(
         assert bars[0].ts_event == _ns(START + timedelta(hours=4))
 
 
+def test_thirty_contiguous_minutes_emit_exactly_one_m30_bar(tmp_path: Path) -> None:
+    root = _catalog_root(tmp_path, range(30))
+
+    result = derive_eurusd_bars(root)
+
+    catalog = ParquetDataCatalog(str(result.catalog_path))
+    for side in ("BID", "ASK"):
+        target = derived._target_bar_type(30, side)
+        assert target == f"{derived.INSTRUMENT_ID}-30-MINUTE-{side}-INTERNAL"
+        bars = catalog.query_bars([target])
+        assert len(bars) == 1
+        assert bars[0].ts_event == _ns(START + timedelta(minutes=30))
+    manifest = _manifest(result.manifest_path)
+    assert manifest["counts"]["emitted"]["M30"] == {"BID": 1, "ASK": 1}
+    assert "M30" in manifest["utc_alignment"]
+
+
+def test_twenty_nine_minutes_emit_no_m30_bar(tmp_path: Path) -> None:
+    root = _catalog_root(tmp_path, range(29))
+
+    result = derive_eurusd_bars(root)
+
+    assert result.emitted_counts[derived._target_bar_type(30, "BID")] == 0
+    manifest = _manifest(result.manifest_path)
+    detail = manifest["series"][derived._target_bar_type(30, "BID")]
+    assert detail["dropped_incomplete_window_count"] == 1
+    assert detail["dropped_window_details"][0]["observed_minutes"] == 29
+
+
+def test_m30_h1_h4_all_emit_from_one_complete_day(tmp_path: Path) -> None:
+    root = _catalog_root(tmp_path, range(24 * 60))
+
+    result = derive_eurusd_bars(root)
+
+    catalog = ParquetDataCatalog(str(result.catalog_path))
+    for minutes, expected_count in ((30, 48), (60, 24), (240, 6)):
+        for side in ("BID", "ASK"):
+            bars = catalog.query_bars([derived._target_bar_type(minutes, side)])
+            assert len(bars) == expected_count
+    manifest = _manifest(result.manifest_path)
+    assert manifest["utc_alignment"]["M30"] == "00:00, 00:30, ..., 23:30 UTC closes"
+    assert manifest["utc_alignment"]["1H"] == "00:00, 01:00, ..., 23:00 UTC closes"
+    assert manifest["utc_alignment"]["4H"] == "00:00, 04:00, ..., 20:00 UTC closes"
+
+
 def test_complete_dataset_is_research_ready(tmp_path: Path) -> None:
     root = _catalog_root(tmp_path, range(24 * 60))
 
@@ -194,15 +239,15 @@ def test_streaming_manifest_bars_and_callbacks_match_reference(
         instrument: object,
         source_bars: Sequence[Bar],
         side: str,
-        hours: int,
+        minutes: int,
     ) -> tuple[tuple[Bar, ...], tuple[int, ...]]:
         bars, callbacks = native(
             instrument=instrument,
             source_bars=source_bars,
             side=side,
-            hours=hours,
+            minutes=minutes,
         )
-        captured.setdefault(_target(hours, side), []).extend(
+        captured.setdefault(derived._target_bar_type(minutes, side), []).extend(
             (bar.ts_event, callback)
             for bar, callback in zip(bars, callbacks, strict=True)
         )
@@ -228,12 +273,12 @@ def test_utc_alignment_and_native_ohlcv_are_preserved(tmp_path: Path) -> None:
     source_catalog = ParquetDataCatalog(str(root / "catalog"))
     source = tuple(source_catalog.query_bars([_source("BID")]))
     instrument = source_catalog.instruments([derived.INSTRUMENT_ID])[0]
-    eligible, _ = derived._eligible_source_bars(source, 4, 240)
+    eligible, _ = derived._eligible_source_bars(source, 240, 240)
     native, callbacks = derived._aggregate_native(
         instrument=instrument,
         source_bars=eligible,
         side="BID",
-        hours=4,
+        minutes=240,
     )
 
     result = derive_eurusd_bars(root)
@@ -257,13 +302,13 @@ def test_bar_is_not_visible_before_final_source_minute_close(
     root = _catalog_root(tmp_path, range(60))
     catalog = ParquetDataCatalog(str(root / "catalog"))
     source = tuple(catalog.query_bars([_source("BID")]))
-    eligible, _ = derived._eligible_source_bars(source, 1, 60)
+    eligible, _ = derived._eligible_source_bars(source, 60, 60)
 
     bars, callbacks = derived._aggregate_native(
         instrument=catalog.instruments([derived.INSTRUMENT_ID])[0],
         source_bars=eligible,
         side="BID",
-        hours=1,
+        minutes=60,
     )
 
     assert bars[0].ts_event == source[-1].ts_init
@@ -331,7 +376,7 @@ def test_manifest_records_parent_hash_config_and_series_hashes(
         == hashlib.sha256(parent.read_bytes()).hexdigest()
     )
     assert manifest["nautilus_version"] == "2.0.0rc2"
-    assert manifest["derivation_version"] == "g0.6-1"
+    assert manifest["derivation_version"] == "g0.6-2"
     assert manifest["aggregation_configuration"] == {
         "api": "Nautilus BacktestEngine composite BarType bar-to-bar aggregation",
         "time_bars_build_delay_microseconds": 1,
@@ -423,12 +468,12 @@ def _reference_behavior(
     start_ns, end_ns = derived._requested_range_ns(parent)
     instrument = catalog.instruments([derived.INSTRUMENT_ID])[0]
     output = {}
-    for hours, expected_minutes in derived._TARGETS:
+    for minutes, expected_minutes in derived._TARGETS:
         for side in derived._SIDES:
             source = tuple(catalog.query_bars([_source(side)]))
             eligible, dropped = derived._eligible_source_bars(
                 source,
-                hours,
+                minutes,
                 expected_minutes,
                 range_start_ns=start_ns,
                 range_end_ns=end_ns,
@@ -437,9 +482,9 @@ def _reference_behavior(
                 instrument=instrument,
                 source_bars=eligible,
                 side=side,
-                hours=hours,
+                minutes=minutes,
             )
-            output[_target(hours, side)] = (bars, callbacks, dropped)
+            output[derived._target_bar_type(minutes, side)] = (bars, callbacks, dropped)
     return output
 
 
@@ -453,9 +498,9 @@ def _reference_manifest(
     parent_path = root / derived.PARENT_MANIFEST_FILENAME
     parent = derived._load_parent_manifest(parent_path)
     series = []
-    for hours, expected_minutes in derived._TARGETS:
+    for minutes, expected_minutes in derived._TARGETS:
         for side in derived._SIDES:
-            target = _target(hours, side)
+            target = derived._target_bar_type(minutes, side)
             bars, _, dropped = reference[target]
             coverage_digest = hashlib.sha256()
             for bar in bars:
@@ -464,7 +509,7 @@ def _reference_manifest(
             series.append(
                 derived.SeriesResult(
                     source_bar_type=_source(side),
-                    composite_bar_type=derived._composite_bar_type(hours, side),
+                    composite_bar_type=derived._composite_bar_type(minutes, side),
                     target_bar_type=target,
                     source_bar_count=source_count,
                     eligible_source_bar_count=(len(bars) * expected_minutes),

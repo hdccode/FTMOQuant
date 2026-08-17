@@ -305,14 +305,14 @@ def test_corrected_derived_window_appears_only_from_complete_source() -> None:
     complete_times = [start + timedelta(minutes=index) for index in range(60)]
     incomplete, dropped = derived._eligible_source_bars(
         _bars(incomplete_times, "BID"),
-        1,
+        60,
         60,
         range_start_ns=_ns(start),
         range_end_ns=_ns(start + timedelta(hours=1)),
     )
     complete, corrected_dropped = derived._eligible_source_bars(
         _bars(complete_times, "BID"),
-        1,
+        60,
         60,
         range_start_ns=_ns(start),
         range_end_ns=_ns(start + timedelta(hours=1)),

@@ -36,7 +36,7 @@ from ftmoquant.data.canonical_source import (
 from ftmoquant.data.dukascopy import INSTRUMENT_ID, NAUTILUS_VERSION
 from ftmoquant.data.instruments import EURUSD_SPEC, InstrumentSpec
 
-DERIVATION_VERSION = "g0.6-1"
+DERIVATION_VERSION = "g0.6-2"
 CONFIG_VERSION = 1
 DERIVED_MANIFEST_FILENAME = "ftmoquant_derived_provenance.json"
 PARENT_MANIFEST_FILENAME = "ftmoquant_provenance.json"
@@ -44,7 +44,9 @@ PARENT_MANIFEST_FILENAME = "ftmoquant_provenance.json"
 _MINUTE_NS = 60_000_000_000
 _BUILD_DELAY_MICROSECONDS = 1
 _BUILD_DELAY_NS = _BUILD_DELAY_MICROSECONDS * 1_000
-_TARGETS = ((1, 60), (4, 240))
+#: Each target is (window minutes, expected 1-minute source bars per window);
+#: the two are always equal, kept as a pair for a smaller historical diff.
+_TARGETS = ((30, 30), (60, 60), (240, 240))
 _SIDES = ("BID", "ASK")
 _SOURCE_QUERY_CHUNK_MINUTES = 10_000
 
@@ -85,7 +87,7 @@ class _SeriesAccumulator:
 
     side: str
     instrument_id: str
-    hours: int
+    minutes: int
     expected_minutes: int
     range_end_ns: int
     window_start_ns: int
@@ -125,7 +127,7 @@ class _BarCollector(DataActor):
 
 
 def derive_eurusd_bars(output_root: Path) -> DerivationResult:
-    """Derive complete UTC 1H/4H bars from a trusted canonical 1m catalog."""
+    """Derive complete UTC M30/1H/4H bars from a trusted canonical 1m catalog."""
 
     return derive_instrument_bars(output_root, EURUSD_SPEC)
 
@@ -183,8 +185,8 @@ def derive_instrument_bars(
         for chunk in chunks:
             for side, bars in (("BID", chunk.bid_bars), ("ASK", chunk.ask_bars)):
                 for bar in bars:
-                    for hours, _ in _TARGETS:
-                        _consume_series_bar(accumulators[(hours, side)], bar)
+                    for minutes, _ in _TARGETS:
+                        _consume_series_bar(accumulators[(minutes, side)], bar)
             _flush_eligible_pending(
                 accumulators, instrument, catalog, write_outputs=write_outputs
             )
@@ -296,10 +298,10 @@ def _preflight_output_mode(
 
     target_files = [
         path
-        for hours, _ in _TARGETS
+        for minutes, _ in _TARGETS
         for side in _SIDES
         for path in catalog.query_files(
-            "bars", [_target_bar_type(hours, side, instrument_id)]
+            "bars", [_target_bar_type(minutes, side, instrument_id)]
         )
     ]
     if target_files and not manifest_path.exists():
@@ -336,17 +338,18 @@ def _series_accumulators(
     start_ns: int, end_ns: int, instrument_id: str = INSTRUMENT_ID
 ) -> dict[tuple[int, str], _SeriesAccumulator]:
     accumulators: dict[tuple[int, str], _SeriesAccumulator] = {}
-    for hours, expected_minutes in _TARGETS:
-        interval_ns = hours * 60 * _MINUTE_NS
+    for minutes, expected_minutes in _TARGETS:
+        interval_ns = minutes * _MINUTE_NS
         if start_ns % interval_ns or end_ns % interval_ns:
             raise DerivationValidationError(
-                f"requested range is not aligned for {hours}H derivation"
+                f"requested range is not aligned for {_timeframe_label(minutes)} "
+                "derivation"
             )
         for side in _SIDES:
-            accumulators[(hours, side)] = _SeriesAccumulator(
+            accumulators[(minutes, side)] = _SeriesAccumulator(
                 side=side,
                 instrument_id=instrument_id,
-                hours=hours,
+                minutes=minutes,
                 expected_minutes=expected_minutes,
                 range_end_ns=end_ns,
                 window_start_ns=start_ns,
@@ -355,7 +358,7 @@ def _series_accumulators(
 
 
 def _consume_series_bar(accumulator: _SeriesAccumulator, bar: Bar) -> None:
-    interval_ns = accumulator.hours * 60 * _MINUTE_NS
+    interval_ns = accumulator.minutes * _MINUTE_NS
     while bar.ts_event >= accumulator.window_start_ns + interval_ns:
         _finalize_series_window(accumulator)
     if bar.ts_event < accumulator.window_start_ns:
@@ -370,7 +373,7 @@ def _finish_series_windows(accumulator: _SeriesAccumulator) -> None:
 
 
 def _finalize_series_window(accumulator: _SeriesAccumulator) -> None:
-    interval_ns = accumulator.hours * 60 * _MINUTE_NS
+    interval_ns = accumulator.minutes * _MINUTE_NS
     observed = accumulator.observed_window
     complete = len(observed) == accumulator.expected_minutes and all(
         bar.ts_event == accumulator.window_start_ns + index * _MINUTE_NS
@@ -404,18 +407,19 @@ def _flush_eligible_pending(
     *,
     write_outputs: bool,
 ) -> None:
-    for hours, _ in _TARGETS:
-        bid_state = accumulators[(hours, "BID")]
-        ask_state = accumulators[(hours, "ASK")]
+    for minutes, _ in _TARGETS:
+        bid_state = accumulators[(minutes, "BID")]
+        ask_state = accumulators[(minutes, "ASK")]
         bid_source = tuple(bid_state.eligible_pending)
         ask_source = tuple(ask_state.eligible_pending)
         bid_state.eligible_pending.clear()
         ask_state.eligible_pending.clear()
+        label = _timeframe_label(minutes)
         if tuple(bar.ts_event for bar in bid_source) != tuple(
             bar.ts_event for bar in ask_source
         ):
             raise DerivationValidationError(
-                f"{hours}H BID/ASK eligible source coverage mismatch"
+                f"{label} BID/ASK eligible source coverage mismatch"
             )
         if not bid_source:
             continue
@@ -429,21 +433,21 @@ def _flush_eligible_pending(
                     instrument=instrument,
                     source_bars=source_bars,
                     side=side,
-                    hours=hours,
+                    minutes=minutes,
                 )
             else:
                 emitted, callbacks = _aggregate_native(
                     instrument=instrument,
                     source_bars=source_bars,
                     side=side,
-                    hours=hours,
+                    minutes=minutes,
                     instrument_id=state.instrument_id,
                 )
             _validate_native_output(
                 emitted=emitted,
                 callback_timestamps_ns=callbacks,
                 source_bars=source_bars,
-                hours=hours,
+                minutes=minutes,
                 instrument_id=state.instrument_id,
             )
             for bar in emitted:
@@ -455,7 +459,7 @@ def _flush_eligible_pending(
             bar.ts_event for bar in emitted_by_side["ASK"]
         ):
             raise DerivationValidationError(
-                f"{hours}H BID/ASK derived coverage mismatch; not research-ready"
+                f"{label} BID/ASK derived coverage mismatch; not research-ready"
             )
         if write_outputs:
             catalog.write_bars(emitted_by_side["BID"])
@@ -466,10 +470,10 @@ def _series_result(accumulator: _SeriesAccumulator) -> SeriesResult:
     return SeriesResult(
         source_bar_type=_source_bar_type(accumulator.side, accumulator.instrument_id),
         composite_bar_type=_composite_bar_type(
-            accumulator.hours, accumulator.side, accumulator.instrument_id
+            accumulator.minutes, accumulator.side, accumulator.instrument_id
         ),
         target_bar_type=_target_bar_type(
-            accumulator.hours, accumulator.side, accumulator.instrument_id
+            accumulator.minutes, accumulator.side, accumulator.instrument_id
         ),
         source_bar_count=accumulator.source_bar_count,
         eligible_source_bar_count=accumulator.eligible_source_bar_count,
@@ -536,7 +540,7 @@ def _validate_stored_outputs(
 
 def _eligible_source_bars(
     bars: Sequence[Bar],
-    hours: int,
+    minutes: int,
     expected_minutes: int,
     *,
     range_start_ns: int | None = None,
@@ -544,7 +548,7 @@ def _eligible_source_bars(
 ) -> tuple[tuple[Bar, ...], tuple[DroppedWindow, ...]]:
     if not bars:
         return (), ()
-    interval_ns = hours * 60 * _MINUTE_NS
+    interval_ns = minutes * _MINUTE_NS
     first_observed_start = (bars[0].ts_event // interval_ns) * interval_ns
     last_observed_start = (bars[-1].ts_event // interval_ns) * interval_ns
     first_start = first_observed_start if range_start_ns is None else range_start_ns
@@ -553,7 +557,8 @@ def _eligible_source_bars(
     )
     if first_start % interval_ns != 0 or end_exclusive % interval_ns != 0:
         raise DerivationValidationError(
-            f"requested range is not aligned for {hours}H derivation"
+            f"requested range is not aligned for {_timeframe_label(minutes)} "
+            "derivation"
         )
     if bars[0].ts_event < first_start or bars[-1].ts_init > end_exclusive:
         raise DerivationValidationError("source bars fall outside the parent UTC range")
@@ -595,12 +600,12 @@ def _aggregate_native(
     instrument: CurrencyPair,
     source_bars: Sequence[Bar],
     side: str,
-    hours: int,
+    minutes: int,
     instrument_id: str = INSTRUMENT_ID,
 ) -> tuple[tuple[Bar, ...], tuple[int, ...]]:
     if not source_bars:
         return (), ()
-    composite = BarType.from_str(_composite_bar_type(hours, side, instrument_id))
+    composite = BarType.from_str(_composite_bar_type(minutes, side, instrument_id))
     collector = _BarCollector(composite)
     logger = LoggerConfig(
         stdout_level=LogLevel.OFF,
@@ -667,21 +672,21 @@ def _validate_native_output(
     emitted: Sequence[Bar],
     callback_timestamps_ns: Sequence[int],
     source_bars: Sequence[Bar],
-    hours: int,
+    minutes: int,
     instrument_id: str = INSTRUMENT_ID,
 ) -> None:
-    interval_ns = hours * 60 * _MINUTE_NS
-    if len(emitted) != len(source_bars) // (hours * 60):
+    interval_ns = minutes * _MINUTE_NS
+    if len(emitted) != len(source_bars) // minutes:
         raise DerivationValidationError(
-            f"Nautilus emitted an unexpected number of {hours}H bars"
+            f"Nautilus emitted an unexpected number of {_timeframe_label(minutes)} bars"
         )
     if len(emitted) != len(callback_timestamps_ns):
         raise DerivationValidationError("missing Nautilus callback timing evidence")
     source_by_close = {bar.ts_init: bar for bar in source_bars}
     for bar, callback_ns in zip(emitted, callback_timestamps_ns, strict=True):
         if str(bar.bar_type) not in {
-            _target_bar_type(hours, "BID", instrument_id),
-            _target_bar_type(hours, "ASK", instrument_id),
+            _target_bar_type(minutes, "BID", instrument_id),
+            _target_bar_type(minutes, "ASK", instrument_id),
         }:
             raise DerivationValidationError(
                 "Nautilus emitted the wrong target bar type"
@@ -704,18 +709,20 @@ def _validate_native_output(
 def _validate_bid_ask_coverage(
     series: Sequence[SeriesResult], instrument_id: str = INSTRUMENT_ID
 ) -> None:
-    for hours, _ in _TARGETS:
+    for minutes, _ in _TARGETS:
+        prefix = f"{instrument_id}-{_timeframe_segment(minutes)}-"
         by_side = {
             item.target_bar_type.split("-")[-2]: (
                 item.emitted_bar_count,
                 item.coverage_sha256,
             )
             for item in series
-            if item.target_bar_type.startswith(f"{instrument_id}-{hours}-HOUR")
+            if item.target_bar_type.startswith(prefix)
         }
         if by_side.get("BID") != by_side.get("ASK"):
             raise DerivationValidationError(
-                f"{hours}H BID/ASK derived coverage mismatch; not research-ready"
+                f"{_timeframe_label(minutes)} BID/ASK derived coverage mismatch; "
+                "not research-ready"
             )
 
 
@@ -750,7 +757,8 @@ def _research_readiness(
             "session calendar"
         )
     if not all_series_nonempty:
-        reasons.append("one or more required 1H/4H BID/ASK series contain no bars")
+        labels = "/".join(_timeframe_label(minutes) for minutes, _ in _TARGETS)
+        reasons.append(f"one or more required {labels} BID/ASK series contain no bars")
 
     research_ready = coverage_status == "complete" and all_series_nonempty
     return coverage_status, research_ready, reasons
@@ -768,7 +776,9 @@ def _derived_manifest(
     instrument_id: str = INSTRUMENT_ID,
 ) -> dict[str, Any]:
     series_manifest: dict[str, Any] = {}
-    emitted_counts: dict[str, dict[str, int]] = {"1H": {}, "4H": {}}
+    emitted_counts: dict[str, dict[str, int]] = {
+        _timeframe_label(minutes): {} for minutes, _ in _TARGETS
+    }
     for item in series:
         incomplete = sum(
             window.reason == "incomplete_or_nonconsecutive_minutes"
@@ -791,7 +801,11 @@ def _derived_manifest(
                 asdict(window) for window in item.dropped_windows
             ],
         }
-        timeframe = "4H" if "-4-HOUR-" in item.target_bar_type else "1H"
+        timeframe = next(
+            _timeframe_label(minutes)
+            for minutes, _ in _TARGETS
+            if f"-{_timeframe_segment(minutes)}-" in item.target_bar_type
+        )
         side = "ASK" if "-ASK-" in item.target_bar_type else "BID"
         emitted_counts[timeframe][side] = item.emitted_bar_count
     return {
@@ -834,8 +848,10 @@ def _derived_manifest(
             "time_bars_origin_offset": {},
         },
         "utc_alignment": {
-            "1H": "00:00, 01:00, ..., 23:00 UTC closes",
-            "4H": "00:00, 04:00, ..., 20:00 UTC closes",
+            **{
+                _timeframe_label(minutes): _utc_alignment_description(minutes)
+                for minutes, _ in _TARGETS
+            },
             "interval_semantics": "left-open: start excluded, close included",
         },
         "timestamp_convention": {
@@ -882,18 +898,44 @@ def _update_bar_digest(digest: Any, bar: Bar) -> None:
     )
 
 
+def _timeframe_segment(minutes: int) -> str:
+    """Nautilus bar-type step/unit segment, e.g. ``30-MINUTE`` or ``4-HOUR``."""
+
+    if minutes % 60 == 0:
+        return f"{minutes // 60}-HOUR"
+    return f"{minutes}-MINUTE"
+
+
+def _timeframe_label(minutes: int) -> str:
+    """Short manifest label, e.g. ``M30``, ``1H``, ``4H``."""
+
+    if minutes % 60 == 0:
+        return f"{minutes // 60}H"
+    return f"M{minutes}"
+
+
+def _utc_alignment_description(minutes: int) -> str:
+    def hhmm(total_minutes: int) -> str:
+        return f"{(total_minutes // 60) % 24:02d}:{total_minutes % 60:02d}"
+
+    return f"00:00, {hhmm(minutes)}, ..., {hhmm(1440 - minutes)} UTC closes"
+
+
 def _source_bar_type(side: str, instrument_id: str = INSTRUMENT_ID) -> str:
     return f"{instrument_id}-1-MINUTE-{side}-EXTERNAL"
 
 
 def _composite_bar_type(
-    hours: int, side: str, instrument_id: str = INSTRUMENT_ID
+    minutes: int, side: str, instrument_id: str = INSTRUMENT_ID
 ) -> str:
-    return f"{instrument_id}-{hours}-HOUR-{side}-INTERNAL@1-MINUTE-EXTERNAL"
+    segment = _timeframe_segment(minutes)
+    return f"{instrument_id}-{segment}-{side}-INTERNAL@1-MINUTE-EXTERNAL"
 
 
-def _target_bar_type(hours: int, side: str, instrument_id: str = INSTRUMENT_ID) -> str:
-    return f"{instrument_id}-{hours}-HOUR-{side}-INTERNAL"
+def _target_bar_type(
+    minutes: int, side: str, instrument_id: str = INSTRUMENT_ID
+) -> str:
+    return f"{instrument_id}-{_timeframe_segment(minutes)}-{side}-INTERNAL"
 
 
 def _iso_ns(timestamp_ns: int) -> str:
@@ -914,7 +956,7 @@ def _sha256(path: Path) -> str:
 
 def _build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
-        description="Derive complete UTC EUR/USD 1H/4H BID/ASK bars from G0.5"
+        description="Derive complete UTC EUR/USD M30/1H/4H BID/ASK bars from G0.5"
     )
     parser.add_argument("--output-root", required=True, type=Path)
     return parser
