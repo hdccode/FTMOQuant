@@ -1,15 +1,18 @@
 from __future__ import annotations
 
+import json
 from datetime import UTC, datetime
 from typing import Any, cast
 
 import pandas as pd
 import pytest
 
+from ftmoquant.backtest.execution_harness import _sha256_tree
 from ftmoquant.research.alpha_lab.data import (
     ALIGNMENT_POLICY,
     AlphaLabDataError,
     assemble_aligned_dataset,
+    load_alpha_lab_dataset,
     resolve_development_roots,
 )
 from ftmoquant.research.stage_g import (
@@ -169,4 +172,94 @@ def test_validation_and_holdout_partitions_are_rejected(
     with pytest.raises(StageGValidationError):
         context.require_range(
             DEVELOPMENT_START, DEVELOPMENT_END_EXCLUSIVE, partition=partition
+        )
+
+
+def _write_readiness(path: Any, **overrides: Any) -> None:
+    document = {
+        "readiness_version": "oanda-alpha-lab-readiness-1",
+        "lineage_id": "oanda_fx_alpha_lab_v1",
+        "ordered_instrument_ids": ["EUR/USD.OANDA"],
+        "per_instrument_status": {"EUR/USD.OANDA": "research_ready"},
+        "instrument_artifacts": [
+            {
+                "instrument_id": "EUR/USD.OANDA",
+                "dataset_symbol": "EURUSD",
+                "catalog_tree_sha256": "0" * 64,
+            }
+        ],
+        "holdout_accessed": False,
+        "holdout_rows_admitted": 0,
+        "research_ready": True,
+    }
+    document.update(overrides)
+    path.write_text(json.dumps(document), encoding="utf-8")
+
+
+def test_oanda_discovery_rejects_holdout_accessed(tmp_path: Any) -> None:
+    readiness_path = tmp_path / "readiness.json"
+    _write_readiness(readiness_path, holdout_accessed=True)
+    with pytest.raises(AlphaLabDataError):
+        load_alpha_lab_dataset(
+            readiness_path=readiness_path,
+            development_root_dir=tmp_path / "development",
+            timeframe="M30",
+            source="oanda",
+        )
+
+
+def test_oanda_discovery_rejects_forbidden_validation_path(tmp_path: Any) -> None:
+    readiness_path = tmp_path / "readiness.json"
+    (tmp_path / "EURUSD").mkdir()
+    (tmp_path / "EURUSD" / "catalog").mkdir()
+    _write_readiness(
+        readiness_path,
+        instrument_artifacts=[
+            {
+                "instrument_id": "EUR/USD.OANDA",
+                "dataset_symbol": "EURUSD",
+                "catalog_tree_sha256": _sha256_tree(tmp_path / "EURUSD" / "catalog"),
+            }
+        ],
+    )
+    with pytest.raises(AlphaLabDataError):
+        load_alpha_lab_dataset(
+            readiness_path=readiness_path,
+            development_root_dir=tmp_path / "holdout_development",
+            timeframe="M30",
+            source="oanda",
+        )
+
+
+def test_oanda_discovery_rejects_catalog_tree_hash_mismatch(tmp_path: Any) -> None:
+    readiness_path = tmp_path / "readiness.json"
+    root = tmp_path / "development" / "EURUSD"
+    (root / "catalog").mkdir(parents=True)
+    _write_readiness(readiness_path)  # records a fixed, wrong all-zero hash
+    with pytest.raises(AlphaLabDataError):
+        load_alpha_lab_dataset(
+            readiness_path=readiness_path,
+            development_root_dir=tmp_path / "development",
+            timeframe="M30",
+            source="oanda",
+        )
+
+
+def test_dukascopy_source_requires_plan_path(tmp_path: Any) -> None:
+    with pytest.raises(AlphaLabDataError, match="plan_path"):
+        load_alpha_lab_dataset(
+            readiness_path=tmp_path / "readiness.json",
+            development_root_dir=tmp_path / "development",
+            timeframe="H1",
+            source="dukascopy",
+        )
+
+
+def test_unsupported_source_is_rejected(tmp_path: Any) -> None:
+    with pytest.raises(AlphaLabDataError, match="unsupported source"):
+        load_alpha_lab_dataset(
+            readiness_path=tmp_path / "readiness.json",
+            development_root_dir=tmp_path / "development",
+            timeframe="H1",
+            source=cast(Any, "unknown"),
         )

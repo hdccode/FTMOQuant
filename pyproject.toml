@@ -46,6 +46,7 @@ ftmoquant-evaluate-carver-trend-carry-ftmo5-development = "ftmoquant.research.ca
 ftmoquant-evaluate-eurusd-tsm-development = "ftmoquant.research.eurusd_tsm_development:main"
 ftmoquant-validate-eurusd-tsm = "ftmoquant.research.eurusd_tsm_validation:main"
 ftmoquant-acquire-carver-oanda-development = "ftmoquant.data.oanda_development:main"
+ftmoquant-acquire-oanda-alpha-lab-development = "ftmoquant.data.oanda_alpha_lab_development:main"
 ftmoquant-alpha-smoke = "ftmoquant.research.alpha_lab.smoke:main"
 
 [dependency-groups]

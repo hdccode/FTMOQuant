@@ -13,19 +13,25 @@ from nautilus_trader.model import Bar
 from nautilus_trader.persistence import ParquetDataCatalog
 
 from ftmoquant.data.dukascopy import INSTRUMENT_ID, NAUTILUS_VERSION
-from ftmoquant.data.instruments import EURUSD_SPEC, InstrumentSpec
+from ftmoquant.data.instruments import EURUSD_SPEC, InstrumentSpec, oanda_symbol
 
 LEGACY_INGESTION_VERSION = "g0.5-1"
 HF_INGESTION_VERSION = "g1-hf-dukascopy-1"
 CORRECTED_INGESTION_VERSION = "g1-dukascopy-corrected-1"
 CORRECTED_DISTRIBUTION_SOURCE = "Hugging Face + direct Dukascopy BI5 correction"
 GENERIC_CORRECTED_INGESTION_VERSION = "g1.4a-dukascopy-corrected-1"
+#: A separate, additive canonical-source lineage for the OANDA alpha-lab
+#: screening universe -- never produced by, or accepted in place of, any
+#: Dukascopy ingestion path above.
+OANDA_ALPHA_LAB_INGESTION_VERSION = "oanda-alpha-lab-development-1"
+OANDA_ALPHA_LAB_DISTRIBUTION_SOURCE = "OANDA v20 practice M1 BID/ASK candles"
 TRUSTED_INGESTION_VERSIONS = frozenset(
     {
         LEGACY_INGESTION_VERSION,
         HF_INGESTION_VERSION,
         CORRECTED_INGESTION_VERSION,
         GENERIC_CORRECTED_INGESTION_VERSION,
+        OANDA_ALPHA_LAB_INGESTION_VERSION,
     }
 )
 _SHA256 = re.compile(r"[0-9a-f]{64}")
@@ -294,6 +300,13 @@ def validate_canonical_source_manifest(
         )
         _validate_generic_correction_identity(manifest)
         return CanonicalSourceIdentity(ingestion_version, CORRECTED_DISTRIBUTION_SOURCE)
+    if ingestion_version == OANDA_ALPHA_LAB_INGESTION_VERSION:
+        _validate_oanda_identity(
+            manifest, cast(dict[str, Any], qa), instrument=instrument
+        )
+        return CanonicalSourceIdentity(
+            ingestion_version, OANDA_ALPHA_LAB_DISTRIBUTION_SOURCE
+        )
     raise CanonicalSourceValidationError(
         "canonical source manifest has an untrusted ingestion_version"
     )
@@ -392,6 +405,55 @@ def _validate_hf_identity(
             raise CanonicalSourceValidationError(
                 "Hugging Face source manifest has invalid source file provenance"
             )
+
+
+def _validate_oanda_identity(
+    manifest: dict[str, Any], qa: dict[str, Any], *, instrument: InstrumentSpec
+) -> None:
+    """Validate the OANDA alpha-lab canonical-source lineage (see
+    ``oanda_alpha_lab_development.py``). No HF/Dukascopy-specific fields are
+    required or accepted here; this is a separate, additive provenance."""
+
+    if manifest.get("distribution_source") != OANDA_ALPHA_LAB_DISTRIBUTION_SOURCE:
+        raise CanonicalSourceValidationError(
+            "OANDA source manifest has incompatible distribution_source"
+        )
+    if manifest.get("oanda_instrument") != oanda_symbol(instrument.dataset_symbol):
+        raise CanonicalSourceValidationError(
+            "OANDA source manifest instrument does not match the declared pair"
+        )
+    config_sha = manifest.get("alpha_lab_config_sha256")
+    semantic_sha = manifest.get("semantic_sha256")
+    if not isinstance(config_sha, str) or _SHA256.fullmatch(config_sha) is None:
+        raise CanonicalSourceValidationError(
+            "OANDA source manifest lacks an alpha-lab config SHA-256"
+        )
+    if not isinstance(semantic_sha, str) or _SHA256.fullmatch(semantic_sha) is None:
+        raise CanonicalSourceValidationError(
+            "OANDA source manifest lacks a semantic SHA-256"
+        )
+    semantic_payload = {
+        key: value for key, value in manifest.items() if key != "semantic_sha256"
+    }
+    expected_semantic_sha = hashlib.sha256(
+        json.dumps(semantic_payload, sort_keys=True, separators=(",", ":")).encode()
+    ).hexdigest()
+    if semantic_sha != expected_semantic_sha:
+        raise CanonicalSourceValidationError(
+            "OANDA source manifest semantic SHA-256 does not match"
+        )
+    if qa.get("holdout_rows_admitted") != 0:
+        raise CanonicalSourceValidationError(
+            "OANDA source manifest does not prove zero holdout admission"
+        )
+    if qa.get("gaps_filled") is not False:
+        raise CanonicalSourceValidationError(
+            "OANDA source manifest must prove gaps_filled=false"
+        )
+    if manifest.get("fills_or_interpolation") is not False:
+        raise CanonicalSourceValidationError(
+            "OANDA source manifest must prove no fills or interpolation"
+        )
 
 
 def _validate_correction_identity(manifest: dict[str, Any]) -> None:

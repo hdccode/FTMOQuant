@@ -23,7 +23,6 @@ from nautilus_trader.model import (
     CurrencyPair,
     Money,
     OmsType,
-    Venue,
 )
 from nautilus_trader.persistence import ParquetDataCatalog
 
@@ -628,7 +627,7 @@ def _aggregate_native(
         )
     )
     engine.add_venue(
-        venue=Venue("DUKASCOPY"),
+        venue=instrument.id.venue,
         oms_type=OmsType.NETTING,
         account_type=AccountType.MARGIN,
         starting_balances=[Money.from_str("100000 USD")],

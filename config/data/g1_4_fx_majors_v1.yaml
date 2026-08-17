@@ -23,18 +23,37 @@ splits:
     end: "2024-08-20"
     days: 498
 
-# Full prospective majors universe: every pair confirmed present in this
-# pinned Hugging Face dataset revision. EUR/USD and GBP/USD are repeated
-# here (identical InstrumentSpec values to g1_4_fx_usd_liquid_v1) so this
-# plan is the single complete source of readiness for the majors alpha lab;
-# their raw canonical 1-minute source data is reused as-is from the existing
-# g1_4_fx_usd_liquid_v1 artifacts rather than re-ingested (see the data
-# expansion report for exact reused paths) -- only M30/H1/H4 derivation and
-# split materialization are re-run, into new majors_v1-scoped output roots,
-# so no historical g1_4_fx_usd_liquid_v1 artifact is ever mutated.
-# USD/CAD and NZD/USD are not carried by this dataset revision at all
-# (verified: no data/USDCAD/ or data/NZDUSD/ shards) and are excluded
-# pending a separate decision on acquisition strategy.
+# Prospective majors universe. Only EUR/USD and GBP/USD are listed today:
+# a mechanical source-inventory preflight against the exact pinned Hugging
+# Face revision above found that NONE of the other three intended majors
+# currently have complete DEVELOPMENT [2019-03-11, 2023-04-11) shard
+# coverage, so none may be declared here yet (see the source-inventory
+# preflight report for exact gap dates/day counts and per-pair status):
+#
+#   AUD/USD.DUKASCOPY: mid-range gaps 2019-07-14..2020-01-09 and
+#     2020-02-09..2023-04-10 (1337/1492 development days missing).
+#     discover_instrument_source_plan() rejects. No existing reconciliation
+#     or direct-cutoff-completion mechanism can repair a mid-sequence gap
+#     (both only operate on the trailing edge past the last usable shard).
+#     REQUIRES_NEW_SOURCE_PATH.
+#   USD/CHF.DUKASCOPY: mid-range gap 2020-10-06..2022-03-29 plus a further
+#     trailing gap 2022-04-29..2023-04-10 (887/1492 development days
+#     missing). discover_instrument_source_plan() rejects. Same
+#     REQUIRES_NEW_SOURCE_PATH conclusion as AUD/USD.
+#   USD/JPY.DUKASCOPY: single trailing gap 2022-11-25..2023-04-10
+#     (137/1492 development days missing; no mid-range gaps at all).
+#     discover_instrument_source_plan() rejects a DEVELOPMENT-scoped
+#     request, BUT this is exactly the shape the existing
+#     ingest_hf_instrument(..., direct_cache_root=...) direct-cutoff-
+#     completion mechanism was built for -- it only activates when the
+#     ingest is requested through the true holdout_cutoff_utc (not a
+#     DEVELOPMENT-only request). READY_VIA_EXISTING_RECONCILIATION, not
+#     yet executed. Add USD/JPY.DUKASCOPY here once that ingest has run
+#     and the resulting canonical data has been verified to cover
+#     DEVELOPMENT in full.
+#
+# USD/CAD and NZD/USD remain excluded: zero shards for either symbol exist
+# in this dataset revision (confirmed identical to the latest revision).
 instruments:
   - dataset_symbol: EURUSD
     instrument_id: EUR/USD.DUKASCOPY
@@ -51,33 +70,6 @@ instruments:
     quote_currency: USD
     price_precision: 5
     price_increment: "0.00001"
-    size_precision: 8
-    size_increment: "0.00000001"
-    session_policy_id: dukascopy-fx-ny-close-v1
-  - dataset_symbol: AUDUSD
-    instrument_id: AUD/USD.DUKASCOPY
-    base_currency: AUD
-    quote_currency: USD
-    price_precision: 5
-    price_increment: "0.00001"
-    size_precision: 8
-    size_increment: "0.00000001"
-    session_policy_id: dukascopy-fx-ny-close-v1
-  - dataset_symbol: USDCHF
-    instrument_id: USD/CHF.DUKASCOPY
-    base_currency: USD
-    quote_currency: CHF
-    price_precision: 5
-    price_increment: "0.00001"
-    size_precision: 8
-    size_increment: "0.00000001"
-    session_policy_id: dukascopy-fx-ny-close-v1
-  - dataset_symbol: USDJPY
-    instrument_id: USD/JPY.DUKASCOPY
-    base_currency: USD
-    quote_currency: JPY
-    price_precision: 3
-    price_increment: "0.001"
     size_precision: 8
     size_increment: "0.00000001"
     session_policy_id: dukascopy-fx-ny-close-v1

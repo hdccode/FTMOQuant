@@ -24,7 +24,11 @@ from ftmoquant.data.dukascopy import SourceBar
 
 _DATASET_SYMBOL = re.compile(r"[A-Z]{6}")
 _CURRENCY = re.compile(r"[A-Z]{3}")
-_INSTRUMENT_ID = re.compile(r"[A-Z]{3}/[A-Z]{3}\.DUKASCOPY")
+#: Closed set of recognized canonical-source suffixes. DUKASCOPY is the
+#: original rigorous execution-lineage source; OANDA is the additive
+#: prospective alpha-lab screening lineage (see oanda_alpha_lab_development.py).
+_SOURCE_SUFFIXES = ("DUKASCOPY", "OANDA")
+_INSTRUMENT_ID = re.compile(r"[A-Z]{3}/[A-Z]{3}\.(?:DUKASCOPY|OANDA)")
 _SIDES = frozenset({"BID", "ASK"})
 
 
@@ -64,8 +68,11 @@ class InstrumentSpec:
             raise InstrumentSpecValidationError(
                 "dataset_symbol must equal base_currency + quote_currency"
             )
-        expected_id = f"{self.base_currency}/{self.quote_currency}.DUKASCOPY"
-        if self.instrument_id != expected_id:
+        expected_ids = {
+            f"{self.base_currency}/{self.quote_currency}.{suffix}"
+            for suffix in _SOURCE_SUFFIXES
+        }
+        if self.instrument_id not in expected_ids:
             raise InstrumentSpecValidationError(
                 "instrument_id must match the declared base and quote currencies"
             )
@@ -134,7 +141,7 @@ class InstrumentSpec:
             ts_event=0,
             ts_init=0,
             info={
-                "provider": "dukascopy",
+                "provider": self.instrument_id.rsplit(".", 1)[-1].lower(),
                 "source_granularity": "1-minute",
                 "session_policy_id": self.session_policy_id,
             },
@@ -201,6 +208,119 @@ USDCHF_SPEC = InstrumentSpec(
     size_precision=8,
     size_increment="0.00000001",
     session_policy_id="dukascopy-fx-ny-close-v1",
+)
+
+
+def oanda_symbol(dataset_symbol: str) -> str:
+    """Map a six-letter dataset_symbol (e.g. ``EURUSD``) to OANDA's own
+    underscore-separated instrument name (e.g. ``EUR_USD``)."""
+
+    if _DATASET_SYMBOL.fullmatch(dataset_symbol) is None:
+        raise InstrumentSpecValidationError(
+            "dataset_symbol must be exactly six uppercase currency letters"
+        )
+    return f"{dataset_symbol[:3]}_{dataset_symbol[3:]}"
+
+
+#: OANDA-sourced canonical identities for the alpha-lab screening lineage.
+#: Precision/pip location for each is taken directly from a live OANDA v20
+#: practice /v3/accounts/{id}/instruments response (displayPrecision,
+#: pipLocation), not assumed. This is a separate provenance lineage from the
+#: DUKASCOPY specs above; instrument_id uses the distinct ``.OANDA`` suffix
+#: so the two are never confused or accidentally cross-read by one another's
+#: canonical catalogs.
+EURUSD_OANDA_SPEC = InstrumentSpec(
+    dataset_symbol="EURUSD",
+    instrument_id="EUR/USD.OANDA",
+    base_currency="EUR",
+    quote_currency="USD",
+    price_precision=5,
+    price_increment="0.00001",
+    size_precision=8,
+    size_increment="0.00000001",
+    session_policy_id="dukascopy-fx-ny-close-v1",
+)
+
+GBPUSD_OANDA_SPEC = InstrumentSpec(
+    dataset_symbol="GBPUSD",
+    instrument_id="GBP/USD.OANDA",
+    base_currency="GBP",
+    quote_currency="USD",
+    price_precision=5,
+    price_increment="0.00001",
+    size_precision=8,
+    size_increment="0.00000001",
+    session_policy_id="dukascopy-fx-ny-close-v1",
+)
+
+AUDUSD_OANDA_SPEC = InstrumentSpec(
+    dataset_symbol="AUDUSD",
+    instrument_id="AUD/USD.OANDA",
+    base_currency="AUD",
+    quote_currency="USD",
+    price_precision=5,
+    price_increment="0.00001",
+    size_precision=8,
+    size_increment="0.00000001",
+    session_policy_id="dukascopy-fx-ny-close-v1",
+)
+
+USDCHF_OANDA_SPEC = InstrumentSpec(
+    dataset_symbol="USDCHF",
+    instrument_id="USD/CHF.OANDA",
+    base_currency="USD",
+    quote_currency="CHF",
+    price_precision=5,
+    price_increment="0.00001",
+    size_precision=8,
+    size_increment="0.00000001",
+    session_policy_id="dukascopy-fx-ny-close-v1",
+)
+
+USDJPY_OANDA_SPEC = InstrumentSpec(
+    dataset_symbol="USDJPY",
+    instrument_id="USD/JPY.OANDA",
+    base_currency="USD",
+    quote_currency="JPY",
+    price_precision=3,
+    price_increment="0.001",
+    size_precision=8,
+    size_increment="0.00000001",
+    session_policy_id="dukascopy-fx-ny-close-v1",
+)
+
+USDCAD_OANDA_SPEC = InstrumentSpec(
+    dataset_symbol="USDCAD",
+    instrument_id="USD/CAD.OANDA",
+    base_currency="USD",
+    quote_currency="CAD",
+    price_precision=5,
+    price_increment="0.00001",
+    size_precision=8,
+    size_increment="0.00000001",
+    session_policy_id="dukascopy-fx-ny-close-v1",
+)
+
+NZDUSD_OANDA_SPEC = InstrumentSpec(
+    dataset_symbol="NZDUSD",
+    instrument_id="NZD/USD.OANDA",
+    base_currency="NZD",
+    quote_currency="USD",
+    price_precision=5,
+    price_increment="0.00001",
+    size_precision=8,
+    size_increment="0.00000001",
+    session_policy_id="dukascopy-fx-ny-close-v1",
+)
+
+OANDA_ALPHA_LAB_SPECS = (
+    EURUSD_OANDA_SPEC,
+    GBPUSD_OANDA_SPEC,
+    AUDUSD_OANDA_SPEC,
+    USDCHF_OANDA_SPEC,
+    USDJPY_OANDA_SPEC,
+    USDCAD_OANDA_SPEC,
+    NZDUSD_OANDA_SPEC,
 )
 
 

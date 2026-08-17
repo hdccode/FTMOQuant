@@ -100,24 +100,59 @@ def test_new_majors_instrument_specs_validate_and_build_bar_types() -> None:
         )
 
 
-def test_majors_universe_plan_admits_non_usd_quote_pairs() -> None:
+def test_majors_universe_plan_currently_lists_only_source_verified_pairs() -> None:
+    """AUD/USD, USD/CHF, USD/JPY are withheld pending a source-inventory
+    preflight finding real DEVELOPMENT gaps in the pinned HF revision; the
+    plan must not claim readiness it hasn't mechanically verified."""
+
     majors = load_research_universe_plan(MAJORS_PLAN)
 
     assert majors.universe_id == "g1_4_fx_majors_v1"
     assert tuple(item.instrument_id for item in majors.instruments) == (
         "EUR/USD.DUKASCOPY",
         "GBP/USD.DUKASCOPY",
-        "AUD/USD.DUKASCOPY",
-        "USD/CHF.DUKASCOPY",
-        "USD/JPY.DUKASCOPY",
     )
-    assert majors.exact_currency_set == ("AUD", "CHF", "EUR", "GBP", "JPY", "USD")
+    assert majors.exact_currency_set == ("EUR", "GBP", "USD")
     assert majors.instrument("EUR/USD.DUKASCOPY") == EURUSD_SPEC
     assert majors.instrument("GBP/USD.DUKASCOPY") == GBPUSD_SPEC
 
     original = load_research_universe_plan(PLAN)
     assert original.semantic_sha256 == (
         "16c29df7bae3bde0a9e64e2cc7758f158186182a3d7a464347791400abcfff69"
+    )
+
+
+def test_non_frozen_universe_can_admit_non_usd_quote_pairs(tmp_path: Path) -> None:
+    """Regression: universe_plan.py's quote-USD-only and instrument-order
+    locks apply only to the original g1_4_fx_usd_liquid_v1 id, so a future
+    majors plan CAN list AUD/USD, USD/CHF, USD/JPY once their source data
+    is actually ready -- this is a code-capability check, independent of
+    the real majors YAML's currently-conservative instrument list."""
+
+    document = yaml.safe_load(MAJORS_PLAN.read_text(encoding="utf-8"))
+    document["instruments"] = [
+        dict(document["instruments"][0]),
+        dict(document["instruments"][1]),
+        {
+            "dataset_symbol": "USDJPY",
+            "instrument_id": "USD/JPY.DUKASCOPY",
+            "base_currency": "USD",
+            "quote_currency": "JPY",
+            "price_precision": 3,
+            "price_increment": "0.001",
+            "size_precision": 8,
+            "size_increment": "0.00000001",
+            "session_policy_id": "dukascopy-fx-ny-close-v1",
+        },
+    ]
+    path = tmp_path / "synthetic_majors.yaml"
+    path.write_text(yaml.safe_dump(document, sort_keys=False), encoding="utf-8")
+
+    synthetic = load_research_universe_plan(path)
+    assert tuple(item.instrument_id for item in synthetic.instruments) == (
+        "EUR/USD.DUKASCOPY",
+        "GBP/USD.DUKASCOPY",
+        "USD/JPY.DUKASCOPY",
     )
 
 
