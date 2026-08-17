@@ -500,3 +500,88 @@ def test_no_fill_or_interpolation_and_full_missing_reporting(tmp_path: Path) -> 
     assert sum(buckets.values()) == document["provider_observation_availability"][
         "missing_interval_count"
     ]
+
+
+# --------------------------------------------------------------------------
+# Tiny CLI wrapper for canonicalize_oanda_instrument() -- no new conversion
+# logic, just argument parsing + one direct call.
+# --------------------------------------------------------------------------
+
+
+def test_canonicalize_cli_calls_canonicalize_oanda_instrument_directly(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    spec = OANDA_ALPHA_LAB_SPECS[0]
+    csv_path = tmp_path / "processed.csv"
+    _write_processed_csv(csv_path, spec, 120)
+    output_root = tmp_path / "canonical"
+
+    oanda_lab.canonicalize_main(
+        [
+            "--processed-csv",
+            str(csv_path),
+            "--instrument-id",
+            spec.instrument_id,
+            "--output-root",
+            str(output_root),
+        ]
+    )
+
+    manifest_path = output_root / oanda_lab.PARENT_MANIFEST_FILENAME
+    assert manifest_path.exists()
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    assert manifest["instrument_id"] == spec.instrument_id
+    assert manifest["qa"]["bid_bar_count"] == 120
+
+    captured = capsys.readouterr()
+    assert str(manifest_path) in captured.out
+    assert f"instrument_id={spec.instrument_id}" in captured.out
+    assert "bid_bar_count=120" in captured.out
+
+
+def test_canonicalize_cli_rejects_unknown_instrument_id(tmp_path: Path) -> None:
+    csv_path = tmp_path / "processed.csv"
+    csv_path.write_text("timestamp_utc\n", encoding="utf-8")
+
+    with pytest.raises(Exception):  # noqa: B017 - fail-closed on unknown instrument
+        oanda_lab.canonicalize_main(
+            [
+                "--processed-csv",
+                str(csv_path),
+                "--instrument-id",
+                "XXX/YYY.OANDA",
+                "--output-root",
+                str(tmp_path / "canonical"),
+            ]
+        )
+
+
+def test_canonicalize_cli_fails_if_output_root_already_populated(
+    tmp_path: Path,
+) -> None:
+    spec = OANDA_ALPHA_LAB_SPECS[0]
+    csv_path = tmp_path / "processed.csv"
+    _write_processed_csv(csv_path, spec, 60)
+    output_root = tmp_path / "canonical"
+
+    oanda_lab.canonicalize_main(
+        [
+            "--processed-csv",
+            str(csv_path),
+            "--instrument-id",
+            spec.instrument_id,
+            "--output-root",
+            str(output_root),
+        ]
+    )
+    with pytest.raises(OandaDevelopmentDataError, match="already contains"):
+        oanda_lab.canonicalize_main(
+            [
+                "--processed-csv",
+                str(csv_path),
+                "--instrument-id",
+                spec.instrument_id,
+                "--output-root",
+                str(output_root),
+            ]
+        )

@@ -826,5 +826,46 @@ def main(argv: list[str] | None = None) -> None:
     print(f"acquired_instruments={len(results)}")
 
 
+def build_canonicalize_parser() -> argparse.ArgumentParser:
+    parser = argparse.ArgumentParser(
+        description=(
+            "Canonicalize one already-acquired OANDA alpha-lab processed M1 "
+            "BID/ASK CSV into the Nautilus catalog shape used by "
+            "derive_instrument_bars()"
+        )
+    )
+    parser.add_argument("--processed-csv", type=Path, required=True)
+    parser.add_argument("--instrument-id", required=True)
+    parser.add_argument("--output-root", type=Path, required=True)
+    parser.add_argument("--config", type=Path, default=CONFIG_PATH)
+    return parser
+
+
+def canonicalize_main(argv: list[str] | None = None) -> None:
+    args = build_canonicalize_parser().parse_args(argv)
+    config = load_oanda_alpha_lab_config(args.config)
+    config.instrument(args.instrument_id)  # fail closed if not in this lineage
+    spec_by_id = {spec.instrument_id: spec for spec in OANDA_ALPHA_LAB_SPECS}
+    spec = spec_by_id.get(args.instrument_id)
+    if spec is None:
+        raise OandaAlphaLabConfigError(
+            f"no OANDA alpha-lab InstrumentSpec for {args.instrument_id}"
+        )
+    manifest_path = canonicalize_oanda_instrument(
+        processed_csv_path=args.processed_csv,
+        instrument_spec=spec,
+        output_root=args.output_root,
+        alpha_lab_config_sha256=config.semantic_sha256,
+        start_utc=config.development_start_utc,
+        end_exclusive_utc=config.development_end_exclusive_utc,
+    )
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    print(manifest_path)
+    print(f"instrument_id={manifest['instrument_id']}")
+    print(f"bid_bar_count={manifest['qa']['bid_bar_count']}")
+    print(f"ask_bar_count={manifest['qa']['ask_bar_count']}")
+    print(f"semantic_sha256={manifest['semantic_sha256']}")
+
+
 if __name__ == "__main__":
     main()
