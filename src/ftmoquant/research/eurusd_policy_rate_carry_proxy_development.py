@@ -631,9 +631,28 @@ def build_carry_proxy_instructions(
     ``differentials`` is a sequence of
     :class:`ftmoquant.data.policy_rates.CausalDifferentialObservation`. Only
     a decision whose 00:00 UTC information time falls in
-    ``[evaluate_start_ns, evaluate_end_exclusive_ns)`` produces an
-    instruction, so no pre-fold P&L can ever enter the fold's evaluation
+    ``[evaluate_start_ns, evaluate_end_exclusive_ns)`` produces a candidate
+    decision, so no pre-fold P&L can ever enter the fold's evaluation
     bookkeeping: no instruction, no order, no exposure, no P&L.
+
+    Daily decisions are TARGET POSITION STATES, not independent orders. The
+    differential series has one candidate decision per calendar day
+    (including weekends), but the tradable market is closed across weekends,
+    weekday holidays, and arbitrary multi-day data gaps -- in those windows,
+    multiple calendar-day decisions resolve to the same first-available
+    executable frame. Per the frozen ``pending_target_policy``
+    (``latest_causal_target_supersedes_unexecuted_older_target``): when this
+    happens, the decision with the greatest ``decision_ns`` strictly before
+    that frame supersedes every older, still-pending decision mapped to the
+    same frame. Superseded decisions produce no instruction, no order, no
+    fill, no separate evidential sample, and no execution cost -- exactly
+    one :class:`CarryProxyInstruction` is emitted per executable frame,
+    using only the surviving (latest) decision's own signal and sizing.
+    This resolves market-closure scheduling only; it does not special-case
+    weekends (no ``weekday() < 5`` branch) -- resolution is driven purely by
+    actual executable-frame availability in ``minute_execution_frames``, so
+    it behaves identically for weekends, weekday holidays, and arbitrary
+    data gaps.
     """
 
     normalizer = G1VolatilityNormalizer()
@@ -641,18 +660,50 @@ def build_carry_proxy_instructions(
     estimator = CausalEwmaDailyVolatility(returns)
     signal_state = EurusdPolicyRateCarryProxyState()
     frames_by_ns = sorted(minute_execution_frames, key=lambda item: item[1])
-    result: list[CarryProxyInstruction] = []
+
+    # Pass 1: resolve every in-window candidate decision to its first
+    # executable frame, keeping only the latest decision per frame.
+    winners: dict[int, tuple[int, int, int, Decimal, date, Any]] = {}
     for observation in sorted(differentials, key=lambda item: item.as_of_date):
         decision_ns = _midnight_utc_ns(observation.as_of_date)
         if not (evaluate_start_ns <= decision_ns < evaluate_end_exclusive_ns):
             continue
-        directional = signal_state.target_for(
-            observation.as_of_date, observation.differential_percent
-        )
         executable = _first_frame_strictly_after(frames_by_ns, decision_ns)
         if executable is None:
             continue
         execution_event_ns, execution_information_ns, midpoint = executable
+        # A decision may only supersede at a frame if it was itself known
+        # strictly before that frame; `_first_frame_strictly_after` already
+        # enforces `execution_information_ns > decision_ns`, so this holds
+        # for every candidate by construction.
+        existing = winners.get(execution_event_ns)
+        if existing is None or decision_ns > existing[0]:
+            winners[execution_event_ns] = (
+                decision_ns,
+                execution_event_ns,
+                execution_information_ns,
+                midpoint,
+                observation.as_of_date,
+                observation.differential_percent,
+            )
+
+    # Pass 2: size and emit exactly one instruction per surviving frame,
+    # deterministically ordered by execution information time.
+    result: list[CarryProxyInstruction] = []
+    for (
+        decision_ns,
+        execution_event_ns,
+        execution_information_ns,
+        midpoint,
+        as_of_date,
+        differential_percent,
+    ) in sorted(winners.values(), key=lambda item: item[2]):
+        if decision_ns >= execution_information_ns:
+            raise EurusdPolicyRateCarryProxyEvaluationError(
+                "causality violation: decision_information_ns must be "
+                "strictly before execution_information_ns"
+            )
+        directional = signal_state.target_for(as_of_date, differential_percent)
         decision = normalizer.target_at(
             float(directional.target), decision_ns, estimator
         )
@@ -667,7 +718,7 @@ def build_carry_proxy_instructions(
                 raw_target=directional.target,
                 target_base_units=target_units,
                 execution_midpoint=midpoint,
-                as_of_date=observation.as_of_date,
+                as_of_date=as_of_date,
             )
         )
     if len({item.execution_event_ns for item in result}) != len(result):

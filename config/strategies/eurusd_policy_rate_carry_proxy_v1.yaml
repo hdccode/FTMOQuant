@@ -124,6 +124,20 @@ execution_and_costs:
   native_cost_quantity_basis: actual_executed_scaled_delta_base_units
   parallel_backtester: false
   ftmo_optimization: false
+  pending_target_policy: latest_causal_target_supersedes_unexecuted_older_target
+  pending_target_policy_scope: >-
+    resolves market-closure execution scheduling only (weekends, weekday
+    holidays, arbitrary multi-day data gaps); when multiple calendar-day
+    decisions resolve to the same first-available executable frame, the
+    decision with the greatest decision_information_ns strictly before
+    that frame supersedes every other pending decision mapped to the same
+    frame -- superseded decisions produce no instruction, no order, no
+    fill, no separate evidential sample, and no execution cost. Does not
+    special-case weekday(), driven purely by actual executable-frame
+    availability. Does not alter sign(ECBDFR - EFFR), the 00:00 UTC
+    decision anchor, the one-business-day rate lag, 1% causal volatility
+    sizing, proxy carry inputs, monthly rollover semantics, daily evidence
+    semantics, or DEVELOPMENT gates.
 
 development_folds:
   version: g1.4b-development-folds-1
@@ -241,4 +255,4 @@ reuse:
   fold_definitions: ftmoquant.research.stage_g.frozen_development_folds
   parallel_execution_engine: false
 
-semantic_sha256: "d200492d6c210e2b0968f8a9731fea00a6a2f273401dbce63011cf5d0cd14eae"
+semantic_sha256: "b6b21d83e71e06c371645ea3dce33178e8168645c11d89c3f5ec63971c0023f9"

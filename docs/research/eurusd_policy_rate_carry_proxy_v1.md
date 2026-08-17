@@ -4,7 +4,51 @@ Status: **preregistered_not_run**. The authoritative machine-readable source
 of truth is
 [`config/strategies/eurusd_policy_rate_carry_proxy_v1.yaml`](../../config/strategies/eurusd_policy_rate_carry_proxy_v1.yaml),
 with semantic SHA-256
-`d200492d6c210e2b0968f8a9731fea00a6a2f273401dbce63011cf5d0cd14eae`.
+`b6b21d83e71e06c371645ea3dce33178e8168645c11d89c3f5ec63971c0023f9`.
+
+## Semantic SHA change: scheduling-collision fix
+
+The first real DEVELOPMENT attempt raised
+`EurusdPolicyRateCarryProxyEvaluationError: multiple daily decisions mapped
+to one execution frame` inside `build_carry_proxy_instructions`, strictly
+before `_run_native_fold` was ever called -- an implementation/scheduling
+failure, not an alpha result. No strategy P&L, carry accrual, fold metrics,
+or gate evaluation was ever produced under the prior semantic SHA
+`d200492d6c210e2b0968f8a9731fea00a6a2f273401dbce63011cf5d0cd14eae`, and no
+output artifact exists for this family in `.artifacts/`.
+
+Root cause: `causal_differential_series` emits one candidate decision per
+calendar day, including weekends, but the tradable EUR/USD market is closed
+across weekends (and would be similarly closed across weekday holidays or
+any other multi-day data gap). Each decision was independently mapped to
+the first executable frame strictly after it; with the market closed,
+consecutive calendar-day decisions (e.g. Saturday and Sunday) both resolved
+to the same Monday-reopen frame, producing a hard collision. Confirmed on
+the real frozen `dev_fold_1` catalog using timestamp metadata only (no
+price returns or P&L inspected): the first collision was the Saturday
+2020-04-11 and Sunday 2020-04-12 00:00 UTC decisions, both resolving to the
+execution frame at 2020-04-12T21:00:00Z (execution_information_ns
+2020-04-12T21:01:00Z); fold 1 alone had 52 such colliding frames, one per
+weekend.
+
+Fix: `execution_and_costs.pending_target_policy` is now
+`latest_causal_target_supersedes_unexecuted_older_target`. Daily decisions
+are treated as target position states, not independent orders. When
+multiple calendar-day decisions resolve to the same first-available
+executable frame, only the decision with the greatest
+`decision_information_ns` strictly before that frame survives; superseded
+decisions produce no instruction, no order, no fill, no separate evidential
+sample, and no execution cost. Resolution is driven purely by actual
+executable-frame availability (no `weekday() < 5` special-casing), so it
+behaves identically for weekends, weekday holidays, and arbitrary data
+gaps. Every retained instruction is asserted to satisfy
+`decision_information_ns < execution_information_ns`.
+
+This changes execution-scheduling semantics only. It does not alter
+`sign(ECBDFR - EFFR)`, the 00:00 UTC decision anchor, the one-business-day
+rate lag, 1% causal volatility sizing, proxy carry inputs, monthly rollover
+semantics, daily evidence semantics, or any DEVELOPMENT gate -- hence the
+semantic SHA change is recorded here rather than treated as a silent patch.
 
 **No DEVELOPMENT, validation, or final-holdout returns have been observed
 for this family.** This document, the YAML preregistration, the strict

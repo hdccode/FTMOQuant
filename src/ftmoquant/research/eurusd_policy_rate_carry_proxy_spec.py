@@ -39,8 +39,22 @@ EURUSD_POLICY_RATE_CARRY_PROXY_SPEC_PATH = Path(
     "config/strategies/eurusd_policy_rate_carry_proxy_v1.yaml"
 )
 EURUSD_POLICY_RATE_CARRY_PROXY_SEMANTIC_SHA256 = (
-    "d200492d6c210e2b0968f8a9731fea00a6a2f273401dbce63011cf5d0cd14eae"
+    "b6b21d83e71e06c371645ea3dce33178e8168645c11d89c3f5ec63971c0023f9"
 )
+# Prior semantic SHA (superseded, never a real-returns-bearing version):
+# "d200492d6c210e2b0968f8a9731fea00a6a2f273401dbce63011cf5d0cd14eae". Changed
+# solely to add the frozen `execution_and_costs.pending_target_policy`
+# (latest_causal_target_supersedes_unexecuted_older_target) resolving the
+# market-closure instruction-collision bug in
+# build_carry_proxy_instructions -- an implementation/scheduling fix, not a
+# change to sign(ECBDFR - EFFR), the 00:00 UTC decision anchor, the
+# one-business-day rate lag, 1% causal volatility sizing, proxy carry
+# inputs, monthly rollover semantics, daily evidence semantics, or
+# DEVELOPMENT gates. No real DEVELOPMENT/validation/final-holdout returns
+# were ever observed under the prior SHA: the only real-data run under it
+# raised EurusdPolicyRateCarryProxyEvaluationError inside
+# build_carry_proxy_instructions, strictly before _run_native_fold, so no
+# strategy P&L was produced and no output artifact exists.
 
 _EXPECTED_TOP_KEYS = {
     "schema_version",
@@ -351,6 +365,11 @@ def _validate_execution_and_costs(document: dict[str, Any]) -> None:
         != "actual_executed_scaled_delta_base_units"
         or execution.get("parallel_backtester") is not False
         or execution.get("ftmo_optimization") is not False
+        or execution.get("pending_target_policy")
+        != "latest_causal_target_supersedes_unexecuted_older_target"
+        or not _string(
+            execution.get("pending_target_policy_scope"), "pending_target_policy_scope"
+        )
     ):
         raise EurusdPolicyRateCarryProxySpecError(
             "execution/cost semantics drifted"

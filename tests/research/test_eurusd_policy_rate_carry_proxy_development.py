@@ -23,6 +23,7 @@ import pytest
 from ftmoquant.backtest.execution_harness import AccountParameters, InterestRateInput
 from ftmoquant.data.dukascopy import SourceBar, _eurusd_instrument, _to_nautilus_bars
 from ftmoquant.data.policy_rates import (
+    CausalDifferentialObservation,
     DatedRate,
     PolicyRateHistory,
     PolicyRateProvenanceError,
@@ -40,8 +41,10 @@ from ftmoquant.research.eurusd_policy_rate_carry_proxy_development import (
     _check_policy_rate_data_hashes,
     _check_semantic_sha,
     _EquityMark,
+    _midnight_utc_ns,
     _run_native_fold,
     _run_preflight_checks,
+    build_carry_proxy_instructions,
     build_monthly_interest_rate_inputs,
     build_parser,
     carry_contribution_ratio,
@@ -850,3 +853,268 @@ def test_native_engine_wiring_usd_gt_eur_short_produces_positive_carry() -> None
         assert float(mirrored.carry_accrual) == pytest.approx(
             float(reference.carry_accrual), rel=1e-3
         )
+
+
+# ---------------------------------------------------------------------------
+# build_carry_proxy_instructions -- pending-target supersession on market
+# closures (weekends, weekday holidays, arbitrary multi-day data gaps).
+#
+# Root cause reproduced against the real frozen dev_fold_1 catalog metadata
+# (timestamps only, no price returns or P&L inspected): the first real
+# collision was the Saturday 2020-04-11 and Sunday 2020-04-12 00:00 UTC
+# decisions, both resolving to the execution frame at 2020-04-12T21:00:00Z.
+# These tests reproduce the same mechanism with fully synthetic, minimal
+# frame/decision sets so the fix is proven independent of any real market
+# data.
+# ---------------------------------------------------------------------------
+
+
+def _obs(as_of: date, differential: str) -> CausalDifferentialObservation:
+    return CausalDifferentialObservation(
+        as_of_date=as_of,
+        differential_percent=Decimal(differential),
+        ecbdfr_observation_date=as_of - timedelta(days=1),
+        effr_observation_date=as_of - timedelta(days=1),
+    )
+
+
+def _frame(event: datetime, info: datetime, mid: str) -> tuple[int, int, Decimal]:
+    return (
+        int(event.timestamp() * 1_000_000_000),
+        int(info.timestamp() * 1_000_000_000),
+        Decimal(mid),
+    )
+
+
+def test_weekend_collision_latest_causal_target_wins() -> None:
+    """Section 7.A: Fri/Sat/Sun/Mon decisions, market closed Sat-Sun.
+
+    Only Friday and Monday have executable frames. Saturday's and Sunday's
+    decisions -- and Monday's own decision -- all resolve to the same
+    Monday reopen frame. Exactly one instruction must be emitted there,
+    carrying the latest (Monday) decision; Friday keeps its own separate,
+    uncollided instruction.
+    """
+
+    friday = date(2024, 1, 5)
+    saturday = date(2024, 1, 6)
+    sunday = date(2024, 1, 7)
+    monday = date(2024, 1, 8)
+
+    frames = (
+        _frame(
+            datetime(2024, 1, 5, 12, 0, tzinfo=UTC),
+            datetime(2024, 1, 5, 12, 1, tzinfo=UTC),
+            "1.10000",
+        ),
+        _frame(
+            datetime(2024, 1, 8, 22, 0, tzinfo=UTC),
+            datetime(2024, 1, 8, 22, 1, tzinfo=UTC),
+            "1.10500",
+        ),
+    )
+    differentials = (
+        _obs(friday, "1"),
+        _obs(saturday, "1"),
+        _obs(sunday, "1"),
+        _obs(monday, "1"),
+    )
+
+    instructions = build_carry_proxy_instructions(
+        minute_execution_frames=frames,
+        daily_midpoints=(),
+        differentials=differentials,
+        evaluate_start_ns=_midnight_utc_ns(friday),
+        evaluate_end_exclusive_ns=_midnight_utc_ns(monday) + 1,
+    )
+
+    assert len(instructions) == 2
+    assert len({item.execution_event_ns for item in instructions}) == 2
+
+    friday_instruction = next(
+        item for item in instructions if item.as_of_date == friday
+    )
+    assert friday_instruction.decision_information_ns == _midnight_utc_ns(friday)
+
+    monday_frame_instructions = [
+        item for item in instructions if item.as_of_date != friday
+    ]
+    assert len(monday_frame_instructions) == 1
+    winner = monday_frame_instructions[0]
+    # Monday's decision (the latest of Sat/Sun/Mon) must be the survivor,
+    # not Saturday's or Sunday's stale, superseded decision.
+    assert winner.as_of_date == monday
+    assert winner.decision_information_ns == _midnight_utc_ns(monday)
+    assert winner.execution_event_ns == int(
+        datetime(2024, 1, 8, 22, 0, tzinfo=UTC).timestamp() * 1_000_000_000
+    )
+
+
+def test_weekend_collision_changing_target_newer_wins_unequivocally() -> None:
+    """Section 7.B: the superseded and surviving decisions have opposite
+    signed targets -- proves supersession picks the newer target, not
+    merely a timestamp label with the same direction throughout."""
+
+    saturday = date(2024, 1, 6)
+    sunday = date(2024, 1, 7)
+    monday = date(2024, 1, 8)
+
+    frames = (
+        _frame(
+            datetime(2024, 1, 8, 22, 0, tzinfo=UTC),
+            datetime(2024, 1, 8, 22, 1, tzinfo=UTC),
+            "1.10500",
+        ),
+    )
+    # Saturday: negative differential (SHORT). Monday: positive (LONG).
+    # Sunday sits in between and is also stale by the time Monday is known.
+    differentials = (
+        _obs(saturday, "-1"),
+        _obs(sunday, "-1"),
+        _obs(monday, "1"),
+    )
+
+    instructions = build_carry_proxy_instructions(
+        minute_execution_frames=frames,
+        daily_midpoints=(),
+        differentials=differentials,
+        evaluate_start_ns=_midnight_utc_ns(saturday),
+        evaluate_end_exclusive_ns=_midnight_utc_ns(monday) + 1,
+    )
+
+    assert len(instructions) == 1
+    winner = instructions[0]
+    assert winner.as_of_date == monday
+    assert winner.raw_target == RawDirectionalTarget.LONG
+    assert winner.raw_target != RawDirectionalTarget.SHORT
+
+
+def test_weekday_holiday_multiday_gap_collision_not_special_cased_to_weekends() -> (
+    None
+):
+    """Section 7.C: an artificial *midweek* gap (Tue/Wed, ordinary weekdays)
+    produces the identical collision-resolution behavior as the weekend
+    case, proving the fix is driven by executable-frame availability, not
+    a hardcoded ``weekday() < 5`` branch."""
+
+    monday = date(2024, 1, 8)
+    tuesday = date(2024, 1, 9)
+    wednesday = date(2024, 1, 10)
+    thursday = date(2024, 1, 11)
+
+    frames = (
+        _frame(
+            datetime(2024, 1, 8, 12, 0, tzinfo=UTC),
+            datetime(2024, 1, 8, 12, 1, tzinfo=UTC),
+            "1.10000",
+        ),
+        _frame(
+            datetime(2024, 1, 11, 12, 0, tzinfo=UTC),
+            datetime(2024, 1, 11, 12, 1, tzinfo=UTC),
+            "1.10800",
+        ),
+    )
+    differentials = (
+        _obs(monday, "1"),
+        _obs(tuesday, "1"),
+        _obs(wednesday, "1"),
+        _obs(thursday, "1"),
+    )
+
+    instructions = build_carry_proxy_instructions(
+        minute_execution_frames=frames,
+        daily_midpoints=(),
+        differentials=differentials,
+        evaluate_start_ns=_midnight_utc_ns(monday),
+        evaluate_end_exclusive_ns=_midnight_utc_ns(thursday) + 1,
+    )
+
+    assert len(instructions) == 2
+    thursday_frame_instructions = [
+        item for item in instructions if item.as_of_date != monday
+    ]
+    assert len(thursday_frame_instructions) == 1
+    assert thursday_frame_instructions[0].as_of_date == thursday
+    assert thursday_frame_instructions[0].decision_information_ns == _midnight_utc_ns(
+        thursday
+    )
+
+
+def test_causality_boundary_decision_at_or_after_frame_cannot_influence_it() -> None:
+    """Section 7.D: a decision known exactly at (not strictly before) a
+    frame's information time must not be resolved to that frame -- it must
+    roll forward to the next executable frame, and every emitted
+    instruction must satisfy decision_information_ns < execution_information_ns."""
+
+    day_one = date(2024, 1, 8)
+    day_two = date(2024, 1, 9)
+
+    frame_one_info = datetime(2024, 1, 9, 0, 0, tzinfo=UTC)  # == day_two's decision_ns
+    frame_two_info = datetime(2024, 1, 9, 12, 0, tzinfo=UTC)
+
+    frames = (
+        _frame(frame_one_info, frame_one_info, "1.10000"),
+        _frame(frame_two_info, frame_two_info, "1.10100"),
+    )
+    differentials = (_obs(day_one, "1"), _obs(day_two, "1"))
+
+    instructions = build_carry_proxy_instructions(
+        minute_execution_frames=frames,
+        daily_midpoints=(),
+        differentials=differentials,
+        evaluate_start_ns=_midnight_utc_ns(day_one),
+        evaluate_end_exclusive_ns=_midnight_utc_ns(day_two) + 1,
+    )
+
+    for item in instructions:
+        assert item.decision_information_ns < item.execution_information_ns
+
+    # day_one's decision (info time == frame_one_info) is NOT strictly
+    # before frame_one, so it must resolve to frame_one only via the
+    # *equality* boundary being excluded -- i.e. day_one's own decision_ns
+    # (day_one 00:00) is strictly before frame_one_info (day_two 00:00),
+    # so it correctly lands on frame_one.
+    day_one_instruction = next(i for i in instructions if i.as_of_date == day_one)
+    assert day_one_instruction.execution_event_ns == int(
+        frame_one_info.timestamp() * 1_000_000_000
+    )
+    # day_two's decision_ns equals frame_one's information time exactly,
+    # so frame_one is NOT strictly after it -- it must roll forward to
+    # frame_two instead of colliding with (or wrongly preceding) frame_one.
+    day_two_instruction = next(i for i in instructions if i.as_of_date == day_two)
+    assert day_two_instruction.execution_event_ns == int(
+        frame_two_info.timestamp() * 1_000_000_000
+    )
+
+
+def test_no_collision_regression_ordinary_daily_decisions_unchanged() -> None:
+    """Section 7.E: with a continuously tradable market (a distinct frame
+    strictly after every decision), behavior is unchanged: one instruction
+    per decision, each carrying its own day's decision_information_ns."""
+
+    days = [date(2024, 1, 8) + timedelta(days=offset) for offset in range(4)]
+    frames = tuple(
+        _frame(
+            datetime.combine(day, datetime.min.time(), tzinfo=UTC)
+            + timedelta(hours=12),
+            datetime.combine(day, datetime.min.time(), tzinfo=UTC)
+            + timedelta(hours=12, minutes=1),
+            "1.10000",
+        )
+        for day in days
+    )
+    differentials = tuple(_obs(day, "1") for day in days)
+
+    instructions = build_carry_proxy_instructions(
+        minute_execution_frames=frames,
+        daily_midpoints=(),
+        differentials=differentials,
+        evaluate_start_ns=_midnight_utc_ns(days[0]),
+        evaluate_end_exclusive_ns=_midnight_utc_ns(days[-1]) + 1,
+    )
+
+    assert len(instructions) == len(days)
+    assert len({item.execution_event_ns for item in instructions}) == len(days)
+    for day, instruction in zip(days, instructions, strict=True):
+        assert instruction.as_of_date == day
+        assert instruction.decision_information_ns == _midnight_utc_ns(day)
