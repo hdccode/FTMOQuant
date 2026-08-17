@@ -43,6 +43,7 @@ ftmoquant-prepare-leo-gbpusd-development-cache = "ftmoquant.research.leo_gbpusd_
 ftmoquant-evaluate-usd-macro-surprise-momentum-development = "ftmoquant.research.usd_macro_surprise_momentum_development:main"
 ftmoquant-evaluate-carver-trend-carry-ftmo5-development = "ftmoquant.research.carver_trend_carry_ftmo5_development:main"
 ftmoquant-evaluate-eurusd-tsm-development = "ftmoquant.research.eurusd_tsm_development:main"
+ftmoquant-validate-eurusd-tsm = "ftmoquant.research.eurusd_tsm_validation:main"
 ftmoquant-acquire-carver-oanda-development = "ftmoquant.data.oanda_development:main"
 
 [dependency-groups]

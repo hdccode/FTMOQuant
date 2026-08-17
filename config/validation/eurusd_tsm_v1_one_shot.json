@@ -1,0 +1,95 @@
+{
+  "acceptance": {
+    "all_required": true,
+    "gates": [
+      "deterministic_evaluation_complete_and_numerically_valid",
+      "executed_raw_alpha_transitions_gte_100",
+      "net_validation_return_gt_zero",
+      "cost_stressed_validation_return_gt_zero",
+      "net_expectancy_per_transition_gt_zero",
+      "cost_stressed_expectancy_per_transition_gt_zero"
+    ],
+    "minimum_executed_raw_alpha_transitions": 100,
+    "non_gating_diagnostics": [
+      "sharpe",
+      "maximum_drawdown",
+      "yearly_concentration",
+      "development_return_magnitude_comparison",
+      "ftmo_challenge_rules"
+    ],
+    "pass_outcome": "VALIDATION_PASSED",
+    "reject_outcome": "VALIDATION_REJECTED"
+  },
+  "development_evidence": {
+    "development_result_sha256": "25df2c4ab482a8595d39e0bcb318cc6a2ba2cad42999b724468774cea686038a",
+    "historical_run_commit": "e4113ac7bdf1fb27d02a46ad61cc2bc3dd6a7a3a",
+    "selected_candidate_sha256": "e0bb95341d425166b652e0727b48aacbe92f092ee01893ca9d596f8692b7a3b3",
+    "trial_registry_sha256": "89dd5cf0aeba087706dbb23ff0fc9d48c56e4c0e0a46847a44f563383bd7efb2"
+  },
+  "execution": {
+    "cost_stress_formula": "base_net_return_minus_half_realized_base_variable_cost",
+    "cost_stress_multiplier": 1.5,
+    "end_boundary": "final_available_tradable_observation_strictly_before_validation_end_exclusive",
+    "evaluator_reference": "ftmoquant.research.eurusd_tsm_development",
+    "evaluator_version": "eurusd-tsm-v1-development-evaluator-1",
+    "semantics": "identical_to_frozen_development_evaluator"
+  },
+  "family": {
+    "family_id": "eurusd_tsm_v1",
+    "family_semantic_sha256": "a8988d0fa24378c2036629fb9ae0dbf9c1fdf5564abdaa0c4ba03633372e251e",
+    "family_version": "1.0.0"
+  },
+  "final_holdout": {
+    "accessed": false,
+    "locked": true,
+    "start_utc": "2024-08-21T00:00:00Z"
+  },
+  "one_shot": {
+    "alternate_candidate_after_rejection": "forbidden",
+    "fixed_output_directory": ".artifacts/g1_4h/eurusd_tsm_v1/validation_run",
+    "maximum_configurations": 1,
+    "permitted_trial_ids": [
+      "0b84330c4e13b930c6d3a2ef0a3d16424210c6f61414bd5a8dad8842dbca964a"
+    ],
+    "validation_search_or_selection": "forbidden"
+  },
+  "protocol_id": "eurusd_tsm_v1-one-shot-validation-1",
+  "schema": "ftmoquant.eurusd-tsm-one-shot-validation-protocol",
+  "schema_version": 1,
+  "selected_candidate": {
+    "parameters": {
+      "deadband": 0.25,
+      "lookback_bars": 6,
+      "refresh_interval_bars": 3,
+      "timeframe": "H4"
+    },
+    "trial_id": "0b84330c4e13b930c6d3a2ef0a3d16424210c6f61414bd5a8dad8842dbca964a"
+  },
+  "semantic_sha256": "580244b36e5f542d6739deb662e7bbf889edd6e52a147b698728e50f5cac554a",
+  "status": "frozen_pre_validation_unobserved",
+  "validation_partition": {
+    "duration_days": 498,
+    "end_exclusive_utc": "2024-08-21T00:00:00Z",
+    "identifier": "g1_4_fx_usd_liquid_v1.validation",
+    "minimum_duration_days_for_frozen_threshold": 365,
+    "partition": "validation",
+    "start_utc": "2023-04-11T00:00:00Z",
+    "validation_split_semantic_sha256": {
+      "EUR/USD.DUKASCOPY": "9cc2bc9da1f147de2e2a18427d380ca7fd5e5fdbc9d1bd4f733554cd8edb7ffa",
+      "GBP/USD.DUKASCOPY": "6d52937c3837e711be3e0e2bc183dbde1d5bc7f6c67f5ab46b57aba3a58f1823"
+    }
+  },
+  "validation_returns_accessed": false,
+  "warmup": {
+    "account_and_pnl_reset_at_validation_start": true,
+    "development_information_only": true,
+    "development_pnl_carry": false,
+    "final_holdout_information": false,
+    "state": [
+      "H4_signal_history",
+      "signal_volatility",
+      "causal_daily_ewma_risk_estimator"
+    ],
+    "validation_decision_window": "information_time_in_validation_half_open_interval"
+  }
+}
