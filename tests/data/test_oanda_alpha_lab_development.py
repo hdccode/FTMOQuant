@@ -12,6 +12,7 @@ from nautilus_trader.persistence import ParquetDataCatalog
 from ftmoquant.data import oanda_alpha_lab_development as oanda_lab
 from ftmoquant.data.derived_bars import derive_instrument_bars
 from ftmoquant.data.instruments import (
+    EURUSD_OANDA_SPEC,
     NZDUSD_OANDA_SPEC,
     OANDA_ALPHA_LAB_SPECS,
     USDCAD_OANDA_SPEC,
@@ -585,3 +586,174 @@ def test_canonicalize_cli_fails_if_output_root_already_populated(
                 str(output_root),
             ]
         )
+
+
+# --------------------------------------------------------------------------
+# Thin OANDA-specific derived-bars CLI -- no derivation logic duplicated;
+# derive_instrument_bars() is called directly.
+# --------------------------------------------------------------------------
+
+
+def test_derive_cli_resolves_eurusd_oanda_spec() -> None:
+    config = oanda_lab.load_oanda_alpha_lab_config()
+    spec = oanda_lab._resolve_oanda_alpha_lab_spec(config, "EUR/USD.OANDA")
+    assert spec is EURUSD_OANDA_SPEC
+
+
+def test_derive_cli_resolves_usdjpy_three_decimal_spec() -> None:
+    config = oanda_lab.load_oanda_alpha_lab_config()
+    spec = oanda_lab._resolve_oanda_alpha_lab_spec(config, "USD/JPY.OANDA")
+    assert spec is USDJPY_OANDA_SPEC
+    assert spec.price_precision == 3
+    assert spec.price_increment == "0.001"
+
+
+def test_derive_cli_rejects_unknown_instrument() -> None:
+    config = oanda_lab.load_oanda_alpha_lab_config()
+    with pytest.raises(Exception):  # noqa: B017 - fail-closed on unknown instrument
+        oanda_lab._resolve_oanda_alpha_lab_spec(config, "XXX/YYY.OANDA")
+
+
+def test_derive_cli_config_semantic_mismatch_fails(tmp_path: Path) -> None:
+    document = yaml.safe_load(CONFIG_PATH.read_text(encoding="utf-8"))
+    document["derived_timeframes"] = ["H1", "H4"]  # drops M30 -> schema violation
+    path = tmp_path / "bad.yaml"
+    path.write_text(yaml.safe_dump(document, sort_keys=False), encoding="utf-8")
+
+    with pytest.raises(oanda_lab.OandaAlphaLabConfigError):
+        oanda_lab.derive_main(
+            [
+                "--config",
+                str(path),
+                "--instrument-id",
+                "EUR/USD.OANDA",
+                "--output-root",
+                str(tmp_path / "canonical"),
+            ]
+        )
+
+
+def test_derive_cli_produces_derived_provenance(tmp_path: Path) -> None:
+    spec = OANDA_ALPHA_LAB_SPECS[0]
+    csv_path = tmp_path / "processed.csv"
+    _write_processed_csv(csv_path, spec, 24 * 60)
+    output_root = tmp_path / "canonical"
+    config = oanda_lab.load_oanda_alpha_lab_config()
+    oanda_lab.canonicalize_oanda_instrument(
+        processed_csv_path=csv_path,
+        instrument_spec=spec,
+        output_root=output_root,
+        alpha_lab_config_sha256=config.semantic_sha256,
+        start_utc=START,
+        end_exclusive_utc=START + timedelta(minutes=24 * 60),
+    )
+
+    oanda_lab.derive_main(
+        [
+            "--instrument-id",
+            spec.instrument_id,
+            "--output-root",
+            str(output_root),
+        ]
+    )
+
+    manifest = json.loads(
+        (output_root / oanda_lab.DERIVED_MANIFEST_FILENAME).read_text(
+            encoding="utf-8"
+        )
+    )
+    assert manifest["research_ready"] is True
+
+
+def test_derive_cli_conflicting_output_fails_through_existing_guard(
+    tmp_path: Path,
+) -> None:
+    spec = OANDA_ALPHA_LAB_SPECS[0]
+    csv_path = tmp_path / "processed.csv"
+    _write_processed_csv(csv_path, spec, 24 * 60)
+    output_root = tmp_path / "canonical"
+    config = oanda_lab.load_oanda_alpha_lab_config()
+    oanda_lab.canonicalize_oanda_instrument(
+        processed_csv_path=csv_path,
+        instrument_spec=spec,
+        output_root=output_root,
+        alpha_lab_config_sha256=config.semantic_sha256,
+        start_utc=START,
+        end_exclusive_utc=START + timedelta(minutes=24 * 60),
+    )
+    oanda_lab.derive_main(
+        ["--instrument-id", spec.instrument_id, "--output-root", str(output_root)]
+    )
+    derived_manifest_path = output_root / oanda_lab.DERIVED_MANIFEST_FILENAME
+    corrupted = json.loads(derived_manifest_path.read_text(encoding="utf-8"))
+    corrupted["research_ready"] = not corrupted["research_ready"]
+    derived_manifest_path.write_text(json.dumps(corrupted), encoding="utf-8")
+
+    from ftmoquant.data.derived_bars import DerivationValidationError
+
+    with pytest.raises(DerivationValidationError, match="conflicts"):
+        oanda_lab.derive_main(
+            [
+                "--instrument-id",
+                spec.instrument_id,
+                "--output-root",
+                str(output_root),
+            ]
+        )
+
+
+def test_historical_derive_instrument_bars_cli_is_unchanged() -> None:
+    from ftmoquant.data.g1_4_cli import _base
+    from ftmoquant.data.g1_4_cli import derive_main as g1_4_derive_main
+
+    parser = _base("Derive one G1.4 instrument's 1H/4H bars")
+    actions = {action.dest for action in parser._actions}
+    assert {"plan", "instrument_id", "output_root"} <= actions
+    assert callable(g1_4_derive_main)
+
+
+def test_real_oanda_config_schema_derives_m30_h1_h4_without_universe_plan(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Regression for the observed failure: the OANDA CLI path must never
+    call load_research_universe_plan() (the G1.4/Dukascopy schema loader),
+    and must successfully derive M30/H1/H4 through the real config schema."""
+
+    import ftmoquant.data.universe_plan as universe_plan_module
+
+    def _forbidden(*_args: object, **_kwargs: object) -> None:
+        raise AssertionError("load_research_universe_plan() must not be called")
+
+    monkeypatch.setattr(
+        universe_plan_module, "load_research_universe_plan", _forbidden
+    )
+
+    spec = OANDA_ALPHA_LAB_SPECS[0]
+    csv_path = tmp_path / "processed.csv"
+    _write_processed_csv(csv_path, spec, 24 * 60)
+    output_root = tmp_path / "canonical"
+    config = oanda_lab.load_oanda_alpha_lab_config(CONFIG_PATH)
+    oanda_lab.canonicalize_oanda_instrument(
+        processed_csv_path=csv_path,
+        instrument_spec=spec,
+        output_root=output_root,
+        alpha_lab_config_sha256=config.semantic_sha256,
+        start_utc=START,
+        end_exclusive_utc=START + timedelta(minutes=24 * 60),
+    )
+
+    oanda_lab.derive_main(
+        [
+            "--config",
+            str(CONFIG_PATH),
+            "--instrument-id",
+            spec.instrument_id,
+            "--output-root",
+            str(output_root),
+        ]
+    )
+
+    catalog = ParquetDataCatalog(str(output_root / "catalog"))
+    for minutes, expected_count in ((30, 48), (60, 24), (240, 6)):
+        bar_type = spec.bar_type(minutes=minutes, side="BID", aggregation="INTERNAL")
+        assert len(catalog.query_bars([bar_type])) == expected_count

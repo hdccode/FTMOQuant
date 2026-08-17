@@ -48,6 +48,7 @@ ftmoquant-validate-eurusd-tsm = "ftmoquant.research.eurusd_tsm_validation:main"
 ftmoquant-acquire-carver-oanda-development = "ftmoquant.data.oanda_development:main"
 ftmoquant-acquire-oanda-alpha-lab-development = "ftmoquant.data.oanda_alpha_lab_development:main"
 ftmoquant-canonicalize-oanda-alpha-lab-instrument = "ftmoquant.data.oanda_alpha_lab_development:canonicalize_main"
+ftmoquant-derive-oanda-alpha-lab-bars = "ftmoquant.data.oanda_alpha_lab_development:derive_main"
 ftmoquant-alpha-smoke = "ftmoquant.research.alpha_lab.smoke:main"
 
 [dependency-groups]

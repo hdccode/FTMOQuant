@@ -32,6 +32,7 @@ from ftmoquant.data.canonical_source import (
 from ftmoquant.data.derived_bars import (
     DERIVED_MANIFEST_FILENAME,
     PARENT_MANIFEST_FILENAME,
+    derive_instrument_bars,
 )
 from ftmoquant.data.dukascopy import NAUTILUS_VERSION, SourceBar
 from ftmoquant.data.instruments import (
@@ -844,13 +845,7 @@ def build_canonicalize_parser() -> argparse.ArgumentParser:
 def canonicalize_main(argv: list[str] | None = None) -> None:
     args = build_canonicalize_parser().parse_args(argv)
     config = load_oanda_alpha_lab_config(args.config)
-    config.instrument(args.instrument_id)  # fail closed if not in this lineage
-    spec_by_id = {spec.instrument_id: spec for spec in OANDA_ALPHA_LAB_SPECS}
-    spec = spec_by_id.get(args.instrument_id)
-    if spec is None:
-        raise OandaAlphaLabConfigError(
-            f"no OANDA alpha-lab InstrumentSpec for {args.instrument_id}"
-        )
+    spec = _resolve_oanda_alpha_lab_spec(config, args.instrument_id)
     manifest_path = canonicalize_oanda_instrument(
         processed_csv_path=args.processed_csv,
         instrument_spec=spec,
@@ -865,6 +860,43 @@ def canonicalize_main(argv: list[str] | None = None) -> None:
     print(f"bid_bar_count={manifest['qa']['bid_bar_count']}")
     print(f"ask_bar_count={manifest['qa']['ask_bar_count']}")
     print(f"semantic_sha256={manifest['semantic_sha256']}")
+
+
+def _resolve_oanda_alpha_lab_spec(
+    config: OandaAlphaLabConfig, instrument_id: str
+) -> InstrumentSpec:
+    """Fail closed unless ``instrument_id`` belongs to the frozen seven-pair
+    OANDA alpha-lab lineage, then resolve its exact InstrumentSpec."""
+
+    config.instrument(instrument_id)  # fail closed if not in this lineage
+    spec_by_id = {spec.instrument_id: spec for spec in OANDA_ALPHA_LAB_SPECS}
+    spec = spec_by_id.get(instrument_id)
+    if spec is None:
+        raise OandaAlphaLabConfigError(
+            f"no OANDA alpha-lab InstrumentSpec for {instrument_id}"
+        )
+    return spec
+
+
+def build_derive_parser() -> argparse.ArgumentParser:
+    parser = argparse.ArgumentParser(
+        description=(
+            "Derive M30/H1/H4 bars for one OANDA alpha-lab canonical "
+            "instrument, using the existing generic derive_instrument_bars()"
+        )
+    )
+    parser.add_argument("--config", type=Path, default=CONFIG_PATH)
+    parser.add_argument("--instrument-id", required=True)
+    parser.add_argument("--output-root", type=Path, required=True)
+    return parser
+
+
+def derive_main(argv: list[str] | None = None) -> None:
+    args = build_derive_parser().parse_args(argv)
+    config = load_oanda_alpha_lab_config(args.config)
+    spec = _resolve_oanda_alpha_lab_spec(config, args.instrument_id)
+    result = derive_instrument_bars(args.output_root, spec)
+    print(result.manifest_path)
 
 
 if __name__ == "__main__":
