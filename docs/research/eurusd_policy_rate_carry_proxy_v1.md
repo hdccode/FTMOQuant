@@ -1,12 +1,79 @@
 # eurusd_policy_rate_carry_proxy_v1 — preregistration
 
-Status: **DEVELOPMENT_CANDIDATE_SELECTED** (real DEVELOPMENT returns have
-been observed; validation and final holdout remain locked). The
-authoritative machine-readable source of truth for the frozen
-preregistration is
+Status: **VALIDATION_REJECTED — CLOSED.** Real DEVELOPMENT and one-shot
+validation returns have both been observed; this family is retired and no
+V1.1, alternate signal, or alternate rate series is authorized. Final
+holdout was never accessed and remains locked. The authoritative
+machine-readable source of truth for the frozen preregistration is
 [`config/strategies/eurusd_policy_rate_carry_proxy_v1.yaml`](../../config/strategies/eurusd_policy_rate_carry_proxy_v1.yaml),
 with semantic SHA-256
 `b6b21d83e71e06c371645ea3dce33178e8168645c11d89c3f5ec63971c0023f9`.
+
+## Closure: one-shot validation result
+
+The frozen one-shot validation
+([protocol semantic SHA-256](../../config/validation/eurusd_policy_rate_carry_proxy_v1_one_shot.json)
+`5133900618c9cbe8744dbb5d0ad5163c16521af30a94b9745d09fb05a5e298cc`) was run
+once at commit `898bfe294599957539873ab1c0e46f39e9230f8b`. Result artifact
+`.artifacts/g1_4h/eurusd_policy_rate_carry_proxy_v1/validation_run/validation_result.json`,
+SHA-256 `6799449bdf60b8f46c7dbd3e9adc7a2612dda576bb0e8c03c8688d0574becb51`.
+
+**Outcome: VALIDATION_REJECTED.**
+
+| gate | result |
+|---|---|
+| deterministic, numerically valid completion | PASSED |
+| eligible daily observations >= 200 | PASSED (351) |
+| validation mean daily total return > 0 | **FAILED** (-2.8344729344729358e-06) |
+| 1.5x-cost-stressed mean daily total return > 0 | **FAILED** (-2.8726407788950057e-06) |
+
+Two of the four frozen hard gates failed; two passed. Per the frozen
+protocol, `all_required: true` -- any single failed gate rejects the
+candidate.
+
+- Cumulative total return: `-0.0009949`; stressed cumulative total return:
+  `-0.001008296913392147`.
+- Sharpe: `-0.07197174154159151`; maximum drawdown: `0.008513971991673178`.
+- 95% stationary-bootstrap dependence-aware CI (diagnostic only, never
+  gated): `[-6.0859188034187993e-05, 5.513094729344728e-05]` -- crosses
+  zero, consistent with the point-estimate rejection but not itself a gate.
+- Yearly attribution: 2023 `-0.0002415`, 2024 `-0.0007534` -- both years
+  negative.
+- Rate-regime attribution: a single `SHORT` regime for the entire
+  validation window (net expectancy `-0.0009949`) -- the causal
+  differential's sign never changed during validation, consistent with the
+  same persistent-exposure character already disclosed for DEVELOPMENT.
+
+**Component attribution (diagnostic, not gated):** proxy carry contribution
+was **positive** (`+0.0041846`, `carry_contribution_ratio +0.44687690221163806`)
+-- the carry proxy earned money exactly as the hypothesis predicted its
+sign would. Spot P&L contribution was **negative and dominant**
+(`-0.005152706173215702`). Execution-cost contribution was small
+(`-0.000026793826784298`). **Adverse EUR/USD spot movement more than
+offset the earned carry; execution costs were not the cause of failure.**
+
+**Interpretation:** validation rejects the narrow EUR/USD pair-level
+policy-rate carry proxy hypothesis exactly as this family's own frozen
+preregistration specified it (an EUR/USD position aligned with the sign of
+the lagged ECB-vs-Fed short-rate differential does not earn positive mean
+total return during validation, net of realistic costs and stress). This
+does **not** falsify the general cross-sectional FX carry factor: that
+broader hypothesis was never tested by this family (see "Limitations" --
+this preregistration explicitly disclaimed any such claim from the start),
+requires a cross-sectional universe of currency pairs this repository's
+frozen 2-instrument universe does not support, and remains untested by any
+work in this repository.
+
+**Closure disposition:** `VALIDATION_REJECTED`, recorded canonically in
+[`src/ftmoquant/research/g1/outcomes.py`](../../src/ftmoquant/research/g1/outcomes.py)
+(`EURUSD_POLICY_RATE_CARRY_PROXY_V1_OUTCOME`). No V1.1, inverted-signal
+variant, alternate rate series, or threshold/magnitude-scaling variant is
+authorized by this result -- the frozen preregistration YAML remains
+byte-for-byte unmodified (its `semantic_sha256` is part of a hashed,
+hard-gated contract), and this document is corrected here rather than by
+editing that file, following this repository's established
+frozen-YAML-corrected-elsewhere convention. Final holdout
+(`>= 2024-08-21T00:00:00Z`) was never accessed and remains locked.
 
 ## Post-run integrity audit
 
@@ -107,13 +174,14 @@ rate lag, 1% causal volatility sizing, proxy carry inputs, monthly rollover
 semantics, daily evidence semantics, or any DEVELOPMENT gate -- hence the
 semantic SHA change is recorded here rather than treated as a silent patch.
 
-**No DEVELOPMENT, validation, or final-holdout returns have been observed
-for this family.** This document, the YAML preregistration, the strict
-loader (`src/ftmoquant/research/eurusd_policy_rate_carry_proxy_spec.py`),
-the production strategy/evaluator modules, and their synthetic-data unit
-tests are the complete deliverable of this preregistration task. Running
-real DEVELOPMENT returns is explicitly out of scope here and has not
-happened.
+**Historical note (superseded):** at the time this scheduling-collision fix
+was preregistered, no DEVELOPMENT, validation, or final-holdout returns had
+been observed for this family, and running real DEVELOPMENT returns was
+explicitly out of scope for that task. This is no longer current: real
+DEVELOPMENT returns were subsequently observed (see "Post-run integrity
+audit" above), and real one-shot validation returns were subsequently
+observed and rejected (see "Closure: one-shot validation result" at the top
+of this document). Final holdout remains untouched.
 
 ## Hypothesis
 
@@ -398,14 +466,14 @@ and its synthetic-data unit and end-to-end tests, including one real native
 Wednesday/Friday-tripled carry accrual and the P&L decomposition identity
 against real engine-produced numbers.
 
-Not done, and out of scope for this task: any DEVELOPMENT, validation, or
-final-holdout return has been computed or read for this family.
-`run_eurusd_policy_rate_carry_proxy_development` exists, is importable, and
-unconditionally refuses to execute (`EurusdPolicyRateCarryProxyEvaluationError`)
-if called, precisely to make that boundary a hard runtime fact rather than
-a convention.
+**Historical note (superseded):** at the time of this preregistration task,
+no DEVELOPMENT, validation, or final-holdout return had yet been computed
+or read for this family, and `run_eurusd_policy_rate_carry_proxy_development`
+unconditionally refused to execute. Both DEVELOPMENT and one-shot
+validation were subsequently run for real (see the sections above); final
+holdout remains untouched and locked.
 
-## Frozen one-shot validation protocol (pre-validation, unobserved)
+## Frozen one-shot validation protocol (now observed — see closure above)
 
 A frozen, machine-readable one-shot validation protocol now exists at
 [`config/validation/eurusd_policy_rate_carry_proxy_v1_one_shot.json`](../../config/validation/eurusd_policy_rate_carry_proxy_v1_one_shot.json),

@@ -144,7 +144,7 @@ EURUSD_TSM_V1_OUTCOME = CandidateOutcomeRecord(
 
 EURUSD_POLICY_RATE_CARRY_PROXY_V1_OUTCOME = CandidateOutcomeRecord(
     candidate_id="eurusd_policy_rate_carry_proxy_v1",
-    outcome=CandidateOutcome.DEVELOPMENT_CANDIDATE_SELECTED,
+    outcome=CandidateOutcome.VALIDATION_REJECTED,
     alpha_evaluated=True,
     reason=(
         "real DEVELOPMENT run at commit 62fdfcd9726f7cdde2e1c431f98148c9916c4995 "
@@ -168,8 +168,40 @@ EURUSD_POLICY_RATE_CARRY_PROXY_V1_OUTCOME = CandidateOutcomeRecord(
         "corrected stressed mean 1.7465540498705657e-05 are both more "
         "positive than originally reported; positive_fold_count is sign- "
         "invariant under removal of zero-valued warm-up terms). Classified "
-        "DEVELOPMENT_CANDIDATE_SELECTED rather than ALPHA_REJECTED because "
-        "both issues are implementation/reporting defects, not an alpha "
-        "result. Validation and final holdout remain locked"
+        "DEVELOPMENT_CANDIDATE_SELECTED (not ALPHA_REJECTED) at that stage "
+        "because both issues were implementation/reporting defects, not an "
+        "alpha result. The one-shot validation was then run once at commit "
+        "898bfe294599957539873ab1c0e46f39e9230f8b (protocol semantic SHA "
+        "5133900618c9cbe8744dbb5d0ad5163c16521af30a94b9745d09fb05a5e298cc, "
+        "family semantic SHA "
+        "b6b21d83e71e06c371645ea3dce33178e8168645c11d89c3f5ec63971c0023f9), "
+        "artifact "
+        ".artifacts/g1_4h/eurusd_policy_rate_carry_proxy_v1/validation_run/"
+        "validation_result.json, sha256 "
+        "6799449bdf60b8f46c7dbd3e9adc7a2612dda576bb0e8c03c8688d0574becb51: "
+        "351 eligible daily observations (>=200 completion/count gate "
+        "PASSED), cumulative total return -0.0009949, mean daily total "
+        "return -2.8344729344729358e-06 (base-return gate FAILED), "
+        "1.5x-cost-stressed cumulative return -0.001008296913392147, "
+        "stressed mean daily total return -2.8726407788950057e-06 "
+        "(stressed-return gate FAILED), Sharpe -0.07197174154159151, max "
+        "drawdown 0.008513971991673178, 95% stationary-bootstrap CI "
+        "[-6.0859188034187993e-05, 5.513094729344728e-05] (diagnostic "
+        "only, not gated). Component attribution: proxy carry contribution "
+        "was POSITIVE (+0.0041846, carry_contribution_ratio +0.4469), spot "
+        "P&L contribution was negative and dominant (-0.005152706173215702), "
+        "execution-cost contribution was small (-0.0000267938267842980) -- "
+        "i.e. adverse EUR/USD spot movement more than offset the earned "
+        "carry, and execution costs were not the cause of failure. Yearly "
+        "attribution: 2023 -0.0002415, 2024 -0.0007534 (both negative). "
+        "VALIDATION_REJECTED: two of the four frozen hard gates (base "
+        "mean > 0, stressed mean > 0) failed; the completion and "
+        "observation-count gates passed. This rejects only the narrow "
+        "EUR/USD pair-level policy-rate carry proxy hypothesis as "
+        "specified in this family's frozen preregistration -- it does NOT "
+        "falsify the general cross-sectional FX carry factor, which was "
+        "never tested here (this family never claimed to test it; see its "
+        "own preregistration's explicit non-claim). Final holdout was "
+        "never accessed and remains locked"
     ),
 )

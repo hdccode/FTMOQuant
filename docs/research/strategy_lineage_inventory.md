@@ -30,6 +30,7 @@ repository (10 total), cross-checked against `docs/research/`,
 | `leo_gbpusd_v1` | YAML frozen at `specified_not_run` (doc corrected, see note below) | two real DEVELOPMENT runs, both pooled-negative, 1/3 positive fold each; implementation changed between runs | **Yes (rerun once)** | No | No | RETIRED (`ALPHA_REJECTED`), corrected this task |
 | `ts_momentum_v1` | YAML frozen at `implemented_not_evaluated` (doc corrected, see note below) | one real DEVELOPMENT run, 1/3 positive fold, pooled mean daily net return negative | **Yes** | No | No | RETIRED (`ALPHA_REJECTED`), corrected this task |
 | `usd_macro_surprise_momentum_v1` | `preregistered_not_evaluated`; doc says *"has no results"* | **stale/false.** Real DEVELOPMENT run exists at `.artifacts/g1_4g/usd_macro_surprise_momentum_v1/development_run/`, with an explicit recorded `"decision": "REJECT_RETIRE"` inside the artifact itself | **Yes** | No | No | **DEVELOPMENT_BURNED, effectively RETIRED** (decision already recorded in-artifact; doc/config never updated to reflect it) |
+| `eurusd_policy_rate_carry_proxy_v1` | (see own doc) | real single-baseline DEVELOPMENT run (`gate_passed=true`, post-run integrity audit found and fixed two implementation defects, neither gate-altering) + one-shot validation (351 eligible observations, base and stressed mean daily total return both negative; carry contribution positive, spot P&L negative and dominant) | Yes | Yes | No | RETIRED (`VALIDATION_REJECTED`) |
 
 ## Detailed evidence per newly-audited candidate
 

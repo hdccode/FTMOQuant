@@ -305,11 +305,18 @@ def test_check_output_not_exists_fails_closed_on_a_populated_directory(
         _check_output_not_exists(output)
 
 
-def test_real_validation_output_dir_does_not_exist() -> None:
-    """This is the single fixed one-shot output path -- it must never have
-    been created by any prior real (or accidental) run in this task."""
+def test_real_validation_output_dir_reflects_the_one_authorized_run() -> None:
+    """The one-shot validation has since been run for real, exactly once
+    (outcome: VALIDATION_REJECTED). This is the single fixed output path
+    for that run -- it must exist and be non-empty, and the one-candidate
+    output-exists preflight check must now correctly refuse to let a
+    second run reuse it (proving the one-shot lock is live, not just
+    theoretical)."""
 
-    assert not VALIDATION_OUTPUT_DIR.exists()
+    assert VALIDATION_OUTPUT_DIR.exists()
+    assert any(VALIDATION_OUTPUT_DIR.iterdir())
+    with pytest.raises(EurusdPolicyRateCarryProxyValidationError):
+        _check_output_not_exists(VALIDATION_OUTPUT_DIR)
 
 
 # ---------------------------------------------------------------------------
@@ -609,8 +616,10 @@ def test_this_test_module_never_invokes_the_runner_to_completion() -> None:
 
     is wrapped in ``pytest.raises`` and targets a nonexistent/sealed path,
     so the runner always raises before touching real validation data.
+    ``VALIDATION_OUTPUT_DIR`` legitimately exists because the one-shot
+    validation was later run for real, exactly once, by the actual CLI
+    outside of pytest -- not by anything in this test module.
     """
 
     source = Path(__file__).read_text(encoding="utf-8")
     assert source.count("run_eurusd_policy_rate_carry_proxy_validation(") >= 2
-    assert not VALIDATION_OUTPUT_DIR.exists()
