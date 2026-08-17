@@ -19,6 +19,7 @@ from ftmoquant.data.instruments import (
     USDJPY_OANDA_SPEC,
     InstrumentSpec,
     InstrumentSpecValidationError,
+    oanda_symbol,
 )
 from ftmoquant.data.oanda_development import (
     OandaDevelopmentDataError,
@@ -234,7 +235,8 @@ def _canonicalize_and_derive(
     minutes = whole_days * 24 * 60
     csv_path = root / f"{spec.dataset_symbol}.csv"
     _write_processed_csv(csv_path, spec, minutes)
-    canon_root = root / "canonical" / spec.dataset_symbol
+    # Real observed canonical layout: canonical/EUR_USD, .../GBP_USD, etc.
+    canon_root = root / "canonical" / oanda_symbol(spec.dataset_symbol)
     config = oanda_lab.load_oanda_alpha_lab_config()
     oanda_lab.canonicalize_oanda_instrument(
         processed_csv_path=csv_path,

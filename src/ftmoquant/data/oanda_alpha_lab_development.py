@@ -899,5 +899,43 @@ def derive_main(argv: list[str] | None = None) -> None:
     print(result.manifest_path)
 
 
+def build_readiness_parser() -> argparse.ArgumentParser:
+    parser = argparse.ArgumentParser(
+        description=(
+            "Freeze OANDA alpha-lab DEVELOPMENT readiness across all seven "
+            "already-derived canonical instruments, using the existing "
+            "freeze_oanda_alpha_lab_readiness() directly"
+        )
+    )
+    parser.add_argument("--config", type=Path, default=CONFIG_PATH)
+    parser.add_argument(
+        "--canonical-root",
+        type=Path,
+        required=True,
+        help=(
+            "directory containing one <DATASET_SYMBOL> subdirectory per "
+            "instrument (e.g. EURUSD, GBPUSD, ...), each already "
+            "canonicalized and derived"
+        ),
+    )
+    parser.add_argument("--output", type=Path, required=True)
+    return parser
+
+
+def readiness_main(argv: list[str] | None = None) -> None:
+    args = build_readiness_parser().parse_args(argv)
+    config = load_oanda_alpha_lab_config(args.config)
+    development_roots = {
+        item.instrument_id: args.canonical_root / oanda_symbol(item.dataset_symbol)
+        for item in config.instruments
+    }
+    readiness_path = freeze_oanda_alpha_lab_readiness(
+        development_roots=development_roots,
+        output_root=args.output,
+        config_path=args.config,
+    )
+    print(readiness_path)
+
+
 if __name__ == "__main__":
     main()

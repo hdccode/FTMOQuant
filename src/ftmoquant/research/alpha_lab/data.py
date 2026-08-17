@@ -35,6 +35,7 @@ import pandas as pd  # type: ignore[import-untyped]
 from nautilus_trader.persistence import ParquetDataCatalog
 
 from ftmoquant.backtest.execution_harness import _sha256_tree
+from ftmoquant.data.instruments import InstrumentSpecValidationError, oanda_symbol
 from ftmoquant.data.universe_readiness import SPLIT_VIEW_FILENAME
 from ftmoquant.research.stage_g import (
     DEVELOPMENT_END_EXCLUSIVE,
@@ -239,7 +240,13 @@ def _discover_oanda_universe(
             raise AlphaLabDataError(
                 f"OANDA alpha-lab readiness is missing dataset_symbol: {instrument_id}"
             )
-        root = development_root_dir / symbol
+        try:
+            root = development_root_dir / oanda_symbol(symbol)
+        except InstrumentSpecValidationError as error:
+            raise AlphaLabDataError(
+                f"OANDA alpha-lab readiness has an invalid dataset_symbol "
+                f"{symbol!r}: {error}"
+            ) from error
         lowered = str(root).lower()
         if "validation" in lowered or "holdout" in lowered:
             raise AlphaLabDataError(f"development root path is forbidden: {root}")
