@@ -1,5 +1,6 @@
 import csv
 import json
+import urllib.parse
 from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 from pathlib import Path
@@ -17,6 +18,10 @@ from ftmoquant.data.instruments import (
     USDJPY_OANDA_SPEC,
     InstrumentSpec,
     InstrumentSpecValidationError,
+)
+from ftmoquant.data.oanda_development import (
+    OandaDevelopmentDataError,
+    _acquire_instrument,
 )
 
 CONFIG_PATH = oanda_lab.CONFIG_PATH
@@ -312,3 +317,186 @@ def test_readiness_document_and_config_hashes_are_deterministic(
     first_doc = json.loads(first.read_text(encoding="utf-8"))
     second_doc = json.loads(second.read_text(encoding="utf-8"))
     assert first_doc["semantic_sha256"] == second_doc["semantic_sha256"]
+
+
+# --------------------------------------------------------------------------
+# Corrected cache-only availability QA: acquisition-completeness defects
+# (must fail research_ready) kept strictly separate from provider-
+# observation availability gaps like weekends (must NOT fail research_ready).
+# --------------------------------------------------------------------------
+
+_BID = {"o": "1.10000", "h": "1.10010", "l": "1.09990", "c": "1.10005"}
+_ASK = {"o": "1.10020", "h": "1.10030", "l": "1.10010", "c": "1.10025"}
+
+
+def _fake_fetcher(candles_by_minute: dict, oanda_instrument: str):
+    def fetcher(url: str, authorization: str) -> bytes:
+        query = urllib.parse.parse_qs(urllib.parse.urlparse(url).query)
+        seg_start = datetime.fromisoformat(query["from"][0].replace("Z", "+00:00"))
+        seg_end = datetime.fromisoformat(query["to"][0].replace("Z", "+00:00"))
+        candles = [
+            {
+                "complete": True,
+                "time": minute.isoformat().replace("+00:00", "Z"),
+                "bid": _BID,
+                "ask": _ASK,
+                "volume": 1,
+            }
+            for minute in sorted(candles_by_minute)
+            if seg_start <= minute < seg_end
+        ]
+        payload = {
+            "instrument": oanda_instrument,
+            "granularity": "M1",
+            "candles": candles,
+        }
+        return json.dumps(payload).encode()
+
+    return fetcher
+
+
+def _weekday_minutes(start: datetime, end: datetime) -> dict:
+    """Every minute in [start, end) except Sat/Sun -- a realistic FX
+    weekend gap, present in every real cache."""
+
+    minutes = {}
+    cursor = start
+    while cursor < end:
+        if cursor.weekday() < 5:
+            minutes[cursor] = True
+        cursor += timedelta(minutes=1)
+    return minutes
+
+
+def _build_synthetic_cache(
+    root: Path, oanda_instrument: str, start: datetime, end: datetime, present: dict
+):
+    fetcher = _fake_fetcher(present, oanda_instrument)
+    return _acquire_instrument(
+        root, oanda_instrument, start, end, "test-token", fetcher
+    )
+
+
+def _manifest_record(root: Path, result) -> dict:
+    return {
+        "oanda_instrument": result.instrument,
+        "processed_path": str(result.processed_path.relative_to(root)),
+        "processed_sha256": result.processed_sha256,
+        "qa_path": str(result.qa_path.relative_to(root)),
+    }
+
+
+def test_weekend_gaps_do_not_fail_readiness(tmp_path: Path) -> None:
+    start = datetime(2023, 1, 6, tzinfo=UTC)  # Friday
+    end = datetime(2023, 1, 10, tzinfo=UTC)  # following Tuesday
+    present = _weekday_minutes(start, end)
+    result = _build_synthetic_cache(tmp_path, "EUR_USD", start, end, present)
+
+    audit = oanda_lab._audit_cached_alpha_lab_instrument(
+        tmp_path, "EUR_USD", start, end, _manifest_record(tmp_path, result)
+    )
+
+    assert audit.research_ready is True
+    assert audit.acquisition_defect_count == 0
+    assert audit.missing_interval_count > 0
+    assert audit.missing_minutes > 0
+    document = json.loads(result.qa_path.read_text(encoding="utf-8"))
+    assert document["qa_version"] == oanda_lab.AVAILABILITY_QA_VERSION
+    assert document["research_ready"] is True
+    assert document["provider_observation_availability"]["missing_interval_count"] > 0
+
+
+def test_genuinely_skipped_request_window_fails(tmp_path: Path) -> None:
+    start = datetime(2023, 1, 6, tzinfo=UTC)
+    end = datetime(2023, 1, 10, tzinfo=UTC)
+    present = _weekday_minutes(start, end)
+    result = _build_synthetic_cache(tmp_path, "EUR_USD", start, end, present)
+    raw_root = tmp_path / "raw" / "EUR_USD"
+    response = next(iter(sorted(raw_root.glob("*.json"))))
+    response.unlink()
+
+    with pytest.raises(OandaDevelopmentDataError, match="skipped"):
+        oanda_lab._audit_cached_alpha_lab_instrument(
+            tmp_path, "EUR_USD", start, end, _manifest_record(tmp_path, result)
+        )
+
+
+def test_duplicated_request_window_fails(tmp_path: Path) -> None:
+    start = datetime(2023, 1, 6, tzinfo=UTC)
+    end = datetime(2023, 1, 10, tzinfo=UTC)
+    present = _weekday_minutes(start, end)
+    result = _build_synthetic_cache(tmp_path, "EUR_USD", start, end, present)
+    raw_root = tmp_path / "raw" / "EUR_USD"
+    response = next(iter(sorted(raw_root.glob("*.json"))))
+    extra = response.with_name("999999_extra.json")
+    extra.write_bytes(response.read_bytes())
+
+    with pytest.raises(OandaDevelopmentDataError, match="skipped|extra"):
+        oanda_lab._audit_cached_alpha_lab_instrument(
+            tmp_path, "EUR_USD", start, end, _manifest_record(tmp_path, result)
+        )
+
+
+def test_raw_request_mismatch_fails(tmp_path: Path) -> None:
+    start = datetime(2023, 1, 6, tzinfo=UTC)
+    end = datetime(2023, 1, 10, tzinfo=UTC)
+    present = _weekday_minutes(start, end)
+    result = _build_synthetic_cache(tmp_path, "EUR_USD", start, end, present)
+    raw_root = tmp_path / "raw" / "EUR_USD"
+    request_path = next(iter(sorted(raw_root.glob("*.request.json"))))
+    mutated = json.loads(request_path.read_text(encoding="utf-8"))
+    mutated["url"] = mutated["url"] + "&tampered=true"
+    request_path.write_text(json.dumps(mutated), encoding="utf-8")
+
+    with pytest.raises(OandaDevelopmentDataError, match="does not match"):
+        oanda_lab._audit_cached_alpha_lab_instrument(
+            tmp_path, "EUR_USD", start, end, _manifest_record(tmp_path, result)
+        )
+
+
+def test_processed_hash_drift_fails(tmp_path: Path) -> None:
+    """Any processed-CSV tampering must fail closed. A row-level edit is
+    caught by the raw/processed correspondence check before the explicit
+    processed_sha256 comparison is even reached -- both guard the same
+    tamper-evidence contract, so either failing proves it."""
+
+    start = datetime(2023, 1, 6, tzinfo=UTC)
+    end = datetime(2023, 1, 10, tzinfo=UTC)
+    present = _weekday_minutes(start, end)
+    result = _build_synthetic_cache(tmp_path, "EUR_USD", start, end, present)
+    content = result.processed_path.read_text(encoding="utf-8")
+    tampered = content.replace("1.10005", "1.10099", 1)
+    assert tampered != content
+    result.processed_path.write_text(tampered, encoding="utf-8")
+
+    with pytest.raises(OandaDevelopmentDataError):
+        oanda_lab._audit_cached_alpha_lab_instrument(
+            tmp_path, "EUR_USD", start, end, _manifest_record(tmp_path, result)
+        )
+
+
+def test_no_fill_or_interpolation_and_full_missing_reporting(tmp_path: Path) -> None:
+    start = datetime(2023, 1, 6, tzinfo=UTC)
+    end = datetime(2023, 1, 10, tzinfo=UTC)
+    present = _weekday_minutes(start, end)
+    result = _build_synthetic_cache(tmp_path, "EUR_USD", start, end, present)
+
+    audit = oanda_lab._audit_cached_alpha_lab_instrument(
+        tmp_path, "EUR_USD", start, end, _manifest_record(tmp_path, result)
+    )
+
+    total_minutes = int((end - start).total_seconds() // 60)
+    assert audit.processed_row_count == len(present)
+    assert audit.processed_row_count + audit.missing_minutes == total_minutes
+    document = json.loads(result.qa_path.read_text(encoding="utf-8"))
+    assert document["no_synthetic_fill_or_interpolation"] is True
+    assert (
+        document["provider_observation_availability"]["filled_or_interpolated_minutes"]
+        == 0
+    )
+    buckets = document["provider_observation_availability"][
+        "missing_interval_duration_buckets"
+    ]
+    assert sum(buckets.values()) == document["provider_observation_availability"][
+        "missing_interval_count"
+    ]
