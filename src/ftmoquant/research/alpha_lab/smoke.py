@@ -20,6 +20,7 @@ import vectorbt as vbt  # type: ignore[import-untyped]
 
 from ftmoquant.research.alpha_lab.data import (
     AlphaLabDataset,
+    DataSource,
     Timeframe,
     load_alpha_lab_dataset,
 )
@@ -29,7 +30,7 @@ FAST_WINDOW = 20
 SLOW_WINDOW = 50
 AGGREGATE_INSTRUMENT_LABEL = "AGGREGATE_EQUAL_WEIGHT"
 
-_TIMEFRAME_FREQ: dict[str, str] = {"H1": "1h", "H4": "4h"}
+_TIMEFRAME_FREQ: dict[str, str] = {"M30": "30min", "H1": "1h", "H4": "4h"}
 
 #: This is a screening-stage cost approximation, not a final execution
 #: cost model. When aligned BID/ASK DEVELOPMENT data is available (it is,
@@ -239,8 +240,13 @@ def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         description=(
             "Run the fixed SMA20/SMA50 vectorbt smoke screen across every "
-            "discovered DEVELOPMENT FX pair."
+            "discovered DEVELOPMENT FX pair, from either the rigorous "
+            "Dukascopy lineage (default) or the prospective OANDA "
+            "alpha-lab lineage."
         )
+    )
+    parser.add_argument(
+        "--source", choices=("dukascopy", "oanda"), default="dukascopy"
     )
     parser.add_argument("--development-root", type=Path, required=True)
     parser.add_argument("--universe-readiness", type=Path, required=True)
@@ -248,8 +254,9 @@ def build_parser() -> argparse.ArgumentParser:
         "--universe-plan",
         type=Path,
         default=Path("config/data/g1_4_fx_usd_liquid_v1.yaml"),
+        help="Dukascopy universe plan; irrelevant and unused for --source oanda",
     )
-    parser.add_argument("--timeframe", choices=("H1", "H4"), default="H1")
+    parser.add_argument("--timeframe", choices=("M30", "H1", "H4"), default="H1")
     parser.add_argument("--output", type=Path, required=True)
     return parser
 
@@ -257,11 +264,13 @@ def build_parser() -> argparse.ArgumentParser:
 def main(argv: list[str] | None = None) -> None:
     parser = build_parser()
     args = parser.parse_args(argv)
+    source: DataSource = args.source
     dataset = load_alpha_lab_dataset(
         readiness_path=args.universe_readiness,
-        plan_path=args.universe_plan,
+        plan_path=None if source == "oanda" else args.universe_plan,
         development_root_dir=args.development_root,
         timeframe=args.timeframe,
+        source=source,
     )
     result = run_sma_crossover_smoke(dataset)
     write_results(result, args.output)

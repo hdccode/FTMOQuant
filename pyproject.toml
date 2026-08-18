@@ -49,7 +49,9 @@ ftmoquant-acquire-carver-oanda-development = "ftmoquant.data.oanda_development:m
 ftmoquant-acquire-oanda-alpha-lab-development = "ftmoquant.data.oanda_alpha_lab_development:main"
 ftmoquant-canonicalize-oanda-alpha-lab-instrument = "ftmoquant.data.oanda_alpha_lab_development:canonicalize_main"
 ftmoquant-derive-oanda-alpha-lab-bars = "ftmoquant.data.oanda_alpha_lab_development:derive_main"
+ftmoquant-freeze-oanda-alpha-lab-readiness = "ftmoquant.data.oanda_alpha_lab_development:readiness_main"
 ftmoquant-alpha-smoke = "ftmoquant.research.alpha_lab.smoke:main"
+ftmoquant-alpha-screening-batch = "ftmoquant.research.alpha_lab.screening_batch:main"
 
 [dependency-groups]
 dev = [
