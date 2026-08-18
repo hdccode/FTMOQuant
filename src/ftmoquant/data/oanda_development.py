@@ -12,7 +12,8 @@ import csv
 import hashlib
 import json
 import os
-from collections.abc import Iterable, Sequence
+import time
+from collections.abc import Callable, Iterable, Sequence
 from dataclasses import asdict, dataclass
 from datetime import UTC, datetime, timedelta
 from decimal import Decimal, InvalidOperation
@@ -31,6 +32,12 @@ ACQUISITION_VERSION = "carver-oanda-development-m1-bid-ask-1"
 QA_VERSION = "carver-oanda-development-availability-qa-2"
 _CHUNK_MINUTES = 5_000
 _INSTRUMENTS = ("XAU_USD", "SPX500_USD", "WTICO_USD", "SOYBN_USD")
+#: Transient failures worth retrying: rate limiting and server-side/gateway
+#: errors. Any other HTTP status (e.g. 404, 401) fails immediately.
+_RETRYABLE_HTTP_STATUS_CODES = frozenset({429, 500, 502, 503, 504})
+_MAX_FETCH_ATTEMPTS = 5
+_RETRY_BASE_DELAY_SECONDS = 1.0
+_RETRY_MAX_DELAY_SECONDS = 30.0
 _CSV_FIELDS = (
     "timestamp_utc",
     "bid_open",
@@ -183,11 +190,21 @@ def _acquire_instrument(
         request_path = raw_root / f"{stem}.request.json"
         url = _candles_url(instrument, segment_start, segment_end)
         if response_path.exists():
+            # Reuse only after proving this exact cached chunk still matches
+            # its own request identity -- never trusted silently.
             payload = response_path.read_bytes()
+            _validate_raw_response(
+                payload, response_path, instrument, segment_start, segment_end
+            )
         else:
             payload = fetcher(url, f"Bearer {token}")
+            # Validate BEFORE writing: an invalid/malformed response is never
+            # persisted, so a transient provider defect can never "stick" as
+            # an unrecoverable cached artifact blocking future resumption.
+            _validate_raw_response(
+                payload, response_path, instrument, segment_start, segment_end
+            )
             _write_idempotent_bytes(response_path, payload)
-        _validate_raw_response(payload, response_path)
         _write_idempotent_json(
             request_path,
             {
@@ -715,16 +732,61 @@ def _candles_url(instrument: str, start: datetime, end: datetime) -> str:
     )
 
 
-def _fetch_response(url: str, authorization: str) -> bytes:
+def _fetch_response(
+    url: str,
+    authorization: str,
+    *,
+    sleep: Callable[[float], None] = time.sleep,
+) -> bytes:
+    """Fetch one OANDA response, retrying transient failures (429/500/502/
+    503/504, and generic network errors) up to ``_MAX_FETCH_ATTEMPTS`` times
+    with capped exponential backoff. Any other HTTP status (e.g. 404, 401)
+    fails immediately -- it is never transient. The final failure always
+    raises :class:`OandaDevelopmentDataError`; no attempt is silently
+    swallowed."""
+
     request = Request(
         url,
         headers={"Authorization": authorization, "Accept-Datetime-Format": "RFC3339"},
     )
-    try:
-        with urlopen(request, timeout=60) as response:  # noqa: S310 - fixed HTTPS OANDA host
-            return cast(bytes, response.read())
-    except (HTTPError, URLError) as error:
-        raise OandaDevelopmentDataError(f"OANDA request failed: {error}") from error
+    last_error: HTTPError | URLError | None = None
+    for attempt in range(1, _MAX_FETCH_ATTEMPTS + 1):
+        try:
+            with urlopen(request, timeout=60) as response:  # noqa: S310 - fixed HTTPS OANDA host
+                return cast(bytes, response.read())
+        except HTTPError as error:
+            if error.code not in _RETRYABLE_HTTP_STATUS_CODES:
+                raise OandaDevelopmentDataError(
+                    f"OANDA request failed: {error}"
+                ) from error
+            last_error = error
+        except URLError as error:
+            last_error = error
+        if attempt < _MAX_FETCH_ATTEMPTS:
+            sleep(_retry_delay_seconds(last_error, attempt))
+    raise OandaDevelopmentDataError(
+        f"OANDA request failed after {_MAX_FETCH_ATTEMPTS} attempts: {last_error}"
+    ) from last_error
+
+
+def _retry_delay_seconds(error: HTTPError | URLError | None, attempt: int) -> float:
+    """Respect ``Retry-After`` on 429 if the provider sends one; otherwise
+    capped exponential backoff. No jitter -- none is used elsewhere in this
+    repository's retry logic (see ``session_reconciliation.py``)."""
+
+    if isinstance(error, HTTPError) and error.code == 429 and error.headers is not None:
+        retry_after = error.headers.get("Retry-After")
+        if retry_after is not None:
+            try:
+                seconds = float(str(retry_after))
+            except ValueError:
+                seconds = None
+            if seconds is not None:
+                return max(0.0, seconds)
+    doubling_factor: int = 2 ** (attempt - 1)
+    return min(
+        _RETRY_BASE_DELAY_SECONDS * doubling_factor, _RETRY_MAX_DELAY_SECONDS
+    )
 
 
 def _access_token_from_environment() -> str | None:
@@ -736,9 +798,38 @@ def _access_token_from_environment() -> str | None:
     return None
 
 
-def _validate_raw_response(payload: bytes, path: Path) -> None:
+def _validate_raw_response(
+    payload: bytes,
+    path: Path,
+    instrument: str,
+    segment_start: datetime,
+    segment_end: datetime,
+) -> None:
+    """Prove ``payload`` is a well-formed OANDA M1 BID/ASK response for
+    exactly this chunk's request identity (instrument, granularity, and
+    every candle timestamp within ``[segment_start, segment_end)``) before
+    it is trusted -- whether freshly fetched or read back from cache.
+    Malformed or mismatched evidence fails closed rather than being
+    silently accepted or silently overwritten."""
+
     try:
-        _load_raw_document_from_bytes(payload)
+        document = _load_raw_document_from_bytes(payload)
+        if document.get("instrument") != instrument:
+            raise OandaDevelopmentDataError(
+                "response instrument does not match request"
+            )
+        if document.get("granularity") != "M1":
+            raise OandaDevelopmentDataError("response granularity is not M1")
+        candles = document.get("candles")
+        if not isinstance(candles, list):
+            raise OandaDevelopmentDataError("response candles must be a list")
+        for candle in candles:
+            row = _candle_row(candle)
+            timestamp = _parse_utc(row["timestamp_utc"])
+            if not segment_start <= timestamp < segment_end:
+                raise OandaDevelopmentDataError(
+                    "response candle timestamp is outside the requested chunk"
+                )
     except OandaDevelopmentDataError as error:
         raise OandaDevelopmentDataError(
             f"invalid raw OANDA response {path.name}: {error}"
