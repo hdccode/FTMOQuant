@@ -50,9 +50,15 @@ ftmoquant-acquire-oanda-alpha-lab-development = "ftmoquant.data.oanda_alpha_lab_
 ftmoquant-canonicalize-oanda-alpha-lab-instrument = "ftmoquant.data.oanda_alpha_lab_development:canonicalize_main"
 ftmoquant-derive-oanda-alpha-lab-bars = "ftmoquant.data.oanda_alpha_lab_development:derive_main"
 ftmoquant-freeze-oanda-alpha-lab-readiness = "ftmoquant.data.oanda_alpha_lab_development:readiness_main"
+ftmoquant-acquire-oanda-alpha-lab-validation = "ftmoquant.data.oanda_alpha_lab_validation:main"
+ftmoquant-canonicalize-oanda-alpha-lab-validation-instrument = "ftmoquant.data.oanda_alpha_lab_validation:canonicalize_main"
+ftmoquant-derive-oanda-alpha-lab-validation-bars = "ftmoquant.data.oanda_alpha_lab_validation:derive_main"
+ftmoquant-freeze-oanda-alpha-lab-validation-readiness = "ftmoquant.data.oanda_alpha_lab_validation:readiness_main"
 ftmoquant-alpha-smoke = "ftmoquant.research.alpha_lab.smoke:main"
 ftmoquant-alpha-screening-batch = "ftmoquant.research.alpha_lab.screening_batch:main"
 ftmoquant-alpha-screening-stage2 = "ftmoquant.research.alpha_lab.screening_stage2:main"
+ftmoquant-alpha-validation-preregister = "ftmoquant.research.alpha_lab.validation:preregister_main"
+ftmoquant-alpha-validation-run = "ftmoquant.research.alpha_lab.validation:main"
 
 [dependency-groups]
 dev = [

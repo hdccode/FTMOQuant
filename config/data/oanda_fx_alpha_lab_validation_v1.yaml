@@ -1,0 +1,54 @@
+# NEW, separate OANDA alpha-lab VALIDATION data lineage. Sourced entirely
+# from OANDA v20 practice, independent of the DEVELOPMENT lineage
+# (oanda_fx_alpha_lab_v1) and the rigorous Dukascopy lineages -- this file
+# never touches or references those artifacts, and carries no strategy
+# semantics of its own. The validation interval below is not invented here:
+# it is pinned by the loader (ftmoquant.data.oanda_alpha_lab_validation) to
+# exactly ftmoquant.research.stage_g.VALIDATION_START -> HOLDOUT_START, the
+# one validation boundary already frozen anywhere in this repository.
+lineage_id: oanda_fx_alpha_lab_validation_v1
+version: 1
+partition: VALIDATION
+
+provider:
+  name: OANDA_v20_practice
+  environment: practice
+  api_version: v3
+
+validation:
+  start_utc: "2023-04-11T00:00:00Z"
+  end_exclusive_utc: "2024-08-21T00:00:00Z"
+
+granularity: M1
+price_components: BA
+
+missing_observation_policy:
+  fills_or_interpolation: false
+  synthetic_fill_permitted: false
+  absent_minutes_during_genuine_market_closure_are_not_defects: true
+  missing_observations_reported_explicitly: true
+
+derived_timeframes: [M30, H1, H4]
+
+instruments:
+  - dataset_symbol: EURUSD
+    instrument_id: EUR/USD.OANDA
+    oanda_instrument: EUR_USD
+  - dataset_symbol: GBPUSD
+    instrument_id: GBP/USD.OANDA
+    oanda_instrument: GBP_USD
+  - dataset_symbol: AUDUSD
+    instrument_id: AUD/USD.OANDA
+    oanda_instrument: AUD_USD
+  - dataset_symbol: USDCHF
+    instrument_id: USD/CHF.OANDA
+    oanda_instrument: USD_CHF
+  - dataset_symbol: USDJPY
+    instrument_id: USD/JPY.OANDA
+    oanda_instrument: USD_JPY
+  - dataset_symbol: USDCAD
+    instrument_id: USD/CAD.OANDA
+    oanda_instrument: USD_CAD
+  - dataset_symbol: NZDUSD
+    instrument_id: NZD/USD.OANDA
+    oanda_instrument: NZD_USD
