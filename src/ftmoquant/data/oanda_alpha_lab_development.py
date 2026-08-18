@@ -697,17 +697,67 @@ def canonicalize_oanda_instrument(
 # --------------------------------------------------------------------------
 
 
+def _oanda_derived_structural_readiness(derived: dict[str, Any]) -> bool:
+    """OANDA-specific derived-bar readiness gate.
+
+    ``derive_instrument_bars()``'s own ``research_ready``/``coverage_status``
+    require literally zero dropped windows (both genuine gaps and pure
+    provider-absence) across the entire multi-year, all-timeframe series --
+    a bar so strict it is permanently False for any real dataset (confirmed
+    true of the existing frozen Dukascopy EUR/USD and GBP/USD derived
+    artifacts too, not something specific to OANDA). Reusing that flag here
+    would make every real OANDA instrument permanently not_ready regardless
+    of data quality, which is the bug this predicate replaces.
+
+    Instead this gates on the structural-integrity signals that genuinely
+    distinguish a sound derivation from a broken one: internally consistent
+    BID/ASK aggregation, no corrupted bars, and at least one real bar
+    actually emitted per side per derived timeframe. Provider-observation
+    absence (missing calendar minutes) is reported elsewhere but is
+    deliberately NOT part of this gate.
+    """
+
+    if derived.get("derived_bar_integrity_valid") is not True:
+        return False
+    if derived.get("bid_ask_derived_coverage_matches") is not True:
+        return False
+    counts = derived.get("counts")
+    emitted = counts.get("emitted") if isinstance(counts, dict) else None
+    if not isinstance(emitted, dict) or set(emitted) != {"M30", "1H", "4H"}:
+        return False
+    for sides in emitted.values():
+        if not isinstance(sides, dict) or set(sides) != {"BID", "ASK"}:
+            return False
+        for count in sides.values():
+            if not isinstance(count, int) or isinstance(count, bool) or count <= 0:
+                return False
+    return True
+
+
 def freeze_oanda_alpha_lab_readiness(
     *,
     development_roots: Mapping[str, Path],
     output_root: Path,
     config_path: Path = CONFIG_PATH,
+    acquisition_qa_root: Path | None = None,
 ) -> Path:
     """Freeze OANDA alpha-lab DEVELOPMENT readiness from already-derived
-    per-instrument catalogs. Readiness is gated on derive_instrument_bars()'s
-    own closure-aware research_ready flag (absent minutes during genuine
-    market closure are not treated as defects there), not on a naive
-    zero-missing-minutes count from raw acquisition QA."""
+    per-instrument catalogs.
+
+    Readiness is gated on :func:`_oanda_derived_structural_readiness`
+    (structural derivation integrity), not on
+    ``derive_instrument_bars()``'s own ``research_ready`` flag, which is
+    permanently False for real multi-year data regardless of quality. See
+    that function's docstring for the full rationale. Provider-observation
+    absence (missing calendar minutes) is never treated as a defect here;
+    genuine structural defects (corrupted bars, BID/ASK mismatch, an empty
+    derived series) still fail.
+
+    ``acquisition_qa_root``, if given, additionally requires the
+    authoritative cache-only acquisition QA (``qa/<oanda_instrument>_M1_
+    bid_ask_qa.json``, e.g. from ``oanda-fx-alpha-lab-availability-qa-2``)
+    to show ``research_ready`` true for every instrument -- read-only,
+    never rewritten here."""
 
     config = load_oanda_alpha_lab_config(config_path)
     if set(development_roots) != {item.instrument_id for item in config.instruments}:
@@ -734,7 +784,17 @@ def freeze_oanda_alpha_lab_readiness(
             raise OandaAlphaLabReadinessError(
                 f"derived manifest instrument mismatch: {instrument_id}"
             )
-        research_ready = derived.get("research_ready") is True
+        research_ready = _oanda_derived_structural_readiness(derived)
+        acquisition_research_ready: bool | None = None
+        if acquisition_qa_root is not None:
+            oanda_instrument = oanda_symbol(spec.dataset_symbol)
+            qa_path = acquisition_qa_root / f"{oanda_instrument}_M1_bid_ask_qa.json"
+            qa = _read_json(qa_path)
+            acquisition_research_ready = (
+                qa.get("instrument") == oanda_instrument
+                and qa.get("research_ready") is True
+            )
+            research_ready = research_ready and acquisition_research_ready
         statuses[instrument_id] = "research_ready" if research_ready else "not_ready"
         artifacts.append(
             {
@@ -744,6 +804,8 @@ def freeze_oanda_alpha_lab_readiness(
                 "derived_sha256": _sha256(root / DERIVED_MANIFEST_FILENAME),
                 "catalog_tree_sha256": _sha256_tree(root / "catalog"),
                 "coverage_status": derived.get("coverage_status"),
+                "derived_research_ready_raw": derived.get("research_ready"),
+                "acquisition_research_ready": acquisition_research_ready,
                 "research_ready": research_ready,
             }
         )
@@ -913,9 +975,20 @@ def build_readiness_parser() -> argparse.ArgumentParser:
         type=Path,
         required=True,
         help=(
-            "directory containing one <DATASET_SYMBOL> subdirectory per "
-            "instrument (e.g. EURUSD, GBPUSD, ...), each already "
-            "canonicalized and derived"
+            "directory containing one <EUR_USD-style oanda_symbol> "
+            "subdirectory per instrument (e.g. EUR_USD, GBP_USD, ...), "
+            "each already canonicalized and derived"
+        ),
+    )
+    parser.add_argument(
+        "--acquisition-qa-root",
+        type=Path,
+        default=None,
+        help=(
+            "optional: directory containing the cache-only acquisition QA "
+            "JSONs (qa/<oanda_instrument>_M1_bid_ask_qa.json); if given, "
+            "readiness also requires each instrument's acquisition QA to "
+            "show research_ready=true"
         ),
     )
     parser.add_argument("--output", type=Path, required=True)
@@ -933,6 +1006,7 @@ def readiness_main(argv: list[str] | None = None) -> None:
         development_roots=development_roots,
         output_root=args.output,
         config_path=args.config,
+        acquisition_qa_root=args.acquisition_qa_root,
     )
     print(readiness_path)
 

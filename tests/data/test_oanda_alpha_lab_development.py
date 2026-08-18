@@ -115,13 +115,20 @@ def test_instrument_spec_rejects_unknown_source_suffix() -> None:
         bad.validate()
 
 
-def _write_processed_csv(path: Path, spec: InstrumentSpec, minutes: int) -> None:
+def _write_processed_csv(
+    path: Path, spec: InstrumentSpec, minutes: int, *, skip: frozenset = frozenset()
+) -> None:
+    """``skip`` is a set of minute indices to omit -- simulating genuine
+    OANDA provider-observation gaps inside an otherwise valid window."""
+
     quantum = Decimal(1).scaleb(-spec.price_precision)
     base = Decimal("110") if spec.price_precision == 3 else Decimal("1.1")
     with path.open("w", newline="", encoding="utf-8") as handle:
         writer = csv.DictWriter(handle, fieldnames=_CSV_FIELDS, lineterminator="\n")
         writer.writeheader()
         for index in range(minutes):
+            if index in skip:
+                continue
             timestamp = START + timedelta(minutes=index)
 
             def fmt(value: Decimal) -> str:
@@ -759,3 +766,234 @@ def test_real_oanda_config_schema_derives_m30_h1_h4_without_universe_plan(
     for minutes, expected_count in ((30, 48), (60, 24), (240, 6)):
         bar_type = spec.bar_type(minutes=minutes, side="BID", aggregation="INTERNAL")
         assert len(catalog.query_bars([bar_type])) == expected_count
+
+
+# --------------------------------------------------------------------------
+# Corrected OANDA-specific derived readiness: provider-observation absence
+# (missing calendar minutes) must not itself make research_ready false, but
+# genuine structural defects still must.
+# --------------------------------------------------------------------------
+
+
+def _canonicalize_and_derive_with_gaps(
+    root: Path, spec: InstrumentSpec, whole_days: int, skip: frozenset
+) -> Path:
+    minutes = whole_days * 24 * 60
+    csv_path = root / f"{spec.dataset_symbol}.csv"
+    _write_processed_csv(csv_path, spec, minutes, skip=skip)
+    canon_root = root / "canonical" / oanda_symbol(spec.dataset_symbol)
+    config = oanda_lab.load_oanda_alpha_lab_config()
+    oanda_lab.canonicalize_oanda_instrument(
+        processed_csv_path=csv_path,
+        instrument_spec=spec,
+        output_root=canon_root,
+        alpha_lab_config_sha256=config.semantic_sha256,
+        start_utc=START,
+        end_exclusive_utc=START + timedelta(minutes=minutes),
+    )
+    derive_instrument_bars(canon_root, spec)
+    return canon_root
+
+
+def test_availability_gaps_do_not_block_oanda_readiness(tmp_path: Path) -> None:
+    """Regression for the real observed bug: genuine OANDA provider-
+    observation gaps inside otherwise valid derivation must NOT make
+    research_ready false, even though derive_instrument_bars()'s own
+    (permanently strict) research_ready flag is False for this data."""
+
+    spec = OANDA_ALPHA_LAB_SPECS[0]
+    canon_root = _canonicalize_and_derive_with_gaps(
+        tmp_path, spec, whole_days=1, skip=frozenset({500, 501, 700})
+    )
+    derived = json.loads(
+        (canon_root / oanda_lab.DERIVED_MANIFEST_FILENAME).read_text(
+            encoding="utf-8"
+        )
+    )
+    # Confirm the gap really does trip derive_instrument_bars()'s own strict
+    # flag -- proving this test exercises the real bug, not a no-op.
+    assert derived["coverage_status"] == "incomplete"
+    assert derived["research_ready"] is False
+
+    assert oanda_lab._oanda_derived_structural_readiness(derived) is True
+
+
+def test_all_seven_synthetic_instruments_with_gaps_freeze_research_ready(
+    tmp_path: Path,
+) -> None:
+    development_roots = {}
+    for spec in OANDA_ALPHA_LAB_SPECS:
+        development_roots[spec.instrument_id] = _canonicalize_and_derive_with_gaps(
+            tmp_path, spec, whole_days=1, skip=frozenset({500, 501, 700})
+        )
+    readiness_path = oanda_lab.freeze_oanda_alpha_lab_readiness(
+        development_roots=development_roots, output_root=tmp_path / "readiness"
+    )
+    document = json.loads(readiness_path.read_text(encoding="utf-8"))
+    assert document["research_ready"] is True
+    assert all(
+        status == "research_ready"
+        for status in document["per_instrument_status"].values()
+    )
+
+
+def _build_all_seven_development_roots(tmp_path: Path) -> dict[str, Path]:
+    return {
+        spec.instrument_id: _canonicalize_and_derive(tmp_path, spec, 1)
+        for spec in OANDA_ALPHA_LAB_SPECS
+    }
+
+
+def test_genuinely_corrupted_derived_manifest_fails_readiness(
+    tmp_path: Path,
+) -> None:
+    spec = OANDA_ALPHA_LAB_SPECS[0]
+    development_roots = _build_all_seven_development_roots(tmp_path)
+    derived_path = (
+        development_roots[spec.instrument_id] / oanda_lab.DERIVED_MANIFEST_FILENAME
+    )
+    corrupted = json.loads(derived_path.read_text(encoding="utf-8"))
+    corrupted["derived_bar_integrity_valid"] = False
+    derived_path.write_text(json.dumps(corrupted), encoding="utf-8")
+
+    readiness_path = oanda_lab.freeze_oanda_alpha_lab_readiness(
+        development_roots=development_roots,
+        output_root=tmp_path / "readiness",
+    )
+    document = json.loads(readiness_path.read_text(encoding="utf-8"))
+    assert document["research_ready"] is False
+    assert document["per_instrument_status"][spec.instrument_id] == "not_ready"
+
+
+def test_empty_derived_series_fails_readiness(tmp_path: Path) -> None:
+    spec = OANDA_ALPHA_LAB_SPECS[0]
+    development_roots = _build_all_seven_development_roots(tmp_path)
+    derived_path = (
+        development_roots[spec.instrument_id] / oanda_lab.DERIVED_MANIFEST_FILENAME
+    )
+    corrupted = json.loads(derived_path.read_text(encoding="utf-8"))
+    corrupted["counts"]["emitted"]["1H"]["BID"] = 0
+    derived_path.write_text(json.dumps(corrupted), encoding="utf-8")
+
+    readiness_path = oanda_lab.freeze_oanda_alpha_lab_readiness(
+        development_roots=development_roots,
+        output_root=tmp_path / "readiness",
+    )
+    document = json.loads(readiness_path.read_text(encoding="utf-8"))
+    assert document["per_instrument_status"][spec.instrument_id] == "not_ready"
+
+
+def test_canonical_manifest_instrument_mismatch_fails(tmp_path: Path) -> None:
+    spec = OANDA_ALPHA_LAB_SPECS[0]
+    development_roots = _build_all_seven_development_roots(tmp_path)
+    canonical_path = (
+        development_roots[spec.instrument_id] / oanda_lab.PARENT_MANIFEST_FILENAME
+    )
+    tampered = json.loads(canonical_path.read_text(encoding="utf-8"))
+    tampered["instrument_id"] = "XXX/YYY.OANDA"
+    canonical_path.write_text(json.dumps(tampered), encoding="utf-8")
+
+    with pytest.raises(oanda_lab.OandaAlphaLabReadinessError, match="canonical"):
+        oanda_lab.freeze_oanda_alpha_lab_readiness(
+            development_roots=development_roots,
+            output_root=tmp_path / "readiness",
+        )
+
+
+def test_derived_manifest_instrument_mismatch_fails(tmp_path: Path) -> None:
+    spec = OANDA_ALPHA_LAB_SPECS[0]
+    development_roots = _build_all_seven_development_roots(tmp_path)
+    derived_path = (
+        development_roots[spec.instrument_id] / oanda_lab.DERIVED_MANIFEST_FILENAME
+    )
+    tampered = json.loads(derived_path.read_text(encoding="utf-8"))
+    tampered["instrument_id"] = "XXX/YYY.OANDA"
+    derived_path.write_text(json.dumps(tampered), encoding="utf-8")
+
+    with pytest.raises(oanda_lab.OandaAlphaLabReadinessError, match="derived"):
+        oanda_lab.freeze_oanda_alpha_lab_readiness(
+            development_roots=development_roots,
+            output_root=tmp_path / "readiness",
+        )
+
+
+def test_acquisition_qa_research_ready_false_fails(tmp_path: Path) -> None:
+    spec = OANDA_ALPHA_LAB_SPECS[0]
+    development_roots = _build_all_seven_development_roots(tmp_path)
+    qa_root = tmp_path / "qa"
+    qa_root.mkdir()
+    for other in OANDA_ALPHA_LAB_SPECS:
+        instrument = oanda_symbol(other.dataset_symbol)
+        ready = other is not spec
+        (qa_root / f"{instrument}_M1_bid_ask_qa.json").write_text(
+            json.dumps({"instrument": instrument, "research_ready": ready}),
+            encoding="utf-8",
+        )
+
+    readiness_path = oanda_lab.freeze_oanda_alpha_lab_readiness(
+        development_roots=development_roots,
+        output_root=tmp_path / "readiness",
+        acquisition_qa_root=qa_root,
+    )
+    document = json.loads(readiness_path.read_text(encoding="utf-8"))
+    assert document["per_instrument_status"][spec.instrument_id] == "not_ready"
+    assert document["research_ready"] is False
+    artifact = next(
+        item
+        for item in document["instrument_artifacts"]
+        if item["instrument_id"] == spec.instrument_id
+    )
+    assert artifact["acquisition_research_ready"] is False
+
+
+def test_acquisition_qa_research_ready_true_passes(tmp_path: Path) -> None:
+    development_roots = _build_all_seven_development_roots(tmp_path)
+    qa_root = tmp_path / "qa"
+    qa_root.mkdir()
+    for spec in OANDA_ALPHA_LAB_SPECS:
+        instrument = oanda_symbol(spec.dataset_symbol)
+        (qa_root / f"{instrument}_M1_bid_ask_qa.json").write_text(
+            json.dumps({"instrument": instrument, "research_ready": True}),
+            encoding="utf-8",
+        )
+
+    readiness_path = oanda_lab.freeze_oanda_alpha_lab_readiness(
+        development_roots=development_roots,
+        output_root=tmp_path / "readiness",
+        acquisition_qa_root=qa_root,
+    )
+    document = json.loads(readiness_path.read_text(encoding="utf-8"))
+    assert document["research_ready"] is True
+    assert all(
+        status == "research_ready"
+        for status in document["per_instrument_status"].values()
+    )
+
+
+def test_no_fill_interpolation_semantics_preserved_under_gaps(
+    tmp_path: Path,
+) -> None:
+    """Missing minutes remain genuinely absent from the canonical catalog --
+    never filled/interpolated -- even when readiness now tolerates them."""
+
+    spec = OANDA_ALPHA_LAB_SPECS[0]
+    skip = frozenset({500, 501, 700})
+    canon_root = _canonicalize_and_derive_with_gaps(tmp_path, spec, 1, skip)
+    catalog = ParquetDataCatalog(str(canon_root / "catalog"))
+    bid_type = spec.bar_type(minutes=1, side="BID", aggregation="EXTERNAL")
+    bars = catalog.query_bars([bid_type])
+    assert len(bars) == 24 * 60 - len(skip)
+
+
+def test_dukascopy_derive_instrument_bars_readiness_semantics_unchanged() -> None:
+    """derive_instrument_bars()'s own research_ready/coverage_status
+    computation is untouched by the OANDA-specific readiness predicate."""
+
+    import inspect
+
+    from ftmoquant.data import derived_bars
+
+    source = inspect.getsource(derived_bars._research_readiness)
+    assert "has_incomplete" in source
+    assert "has_unclassified" in source
+    assert "coverage_status == \"complete\"" in source
