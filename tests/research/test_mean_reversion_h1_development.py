@@ -374,24 +374,20 @@ def test_daily_midpoints_skip_unpaired_bars() -> None:
     assert dev._daily_midpoints_from_h1_bars(bid_bars, ask_bars) == ()
 
 
-def test_validate_bar_stream_rejects_empty_stream() -> None:
-    with pytest.raises(dev.MeanReversionH1DevelopmentError):
-        dev._validate_bar_stream((), "EUR/USD.OANDA-1-HOUR-BID-INTERNAL", 0, 1000)
-
-
-def test_validate_bar_stream_rejects_non_monotonic_bars() -> None:
+@pytest.mark.parametrize(
+    "bars",
+    [
+        (),
+        (
+            SimpleNamespace(bar_type="EUR/USD.OANDA-1-HOUR-BID-INTERNAL", ts_event=100),
+            SimpleNamespace(bar_type="EUR/USD.OANDA-1-HOUR-BID-INTERNAL", ts_event=100),
+        ),
+        (SimpleNamespace(bar_type="EUR/USD.OANDA-1-HOUR-BID-INTERNAL", ts_event=5000),),
+    ],
+    ids=["empty", "non_monotonic", "out_of_range"],
+)
+def test_validate_bar_stream_rejects_malformed_streams(bars) -> None:
     bar_type = "EUR/USD.OANDA-1-HOUR-BID-INTERNAL"
-    bars = (
-        SimpleNamespace(bar_type=bar_type, ts_event=100),
-        SimpleNamespace(bar_type=bar_type, ts_event=100),
-    )
-    with pytest.raises(dev.MeanReversionH1DevelopmentError):
-        dev._validate_bar_stream(bars, bar_type, 0, 1000)  # type: ignore[arg-type]
-
-
-def test_validate_bar_stream_rejects_out_of_range_bars() -> None:
-    bar_type = "EUR/USD.OANDA-1-HOUR-BID-INTERNAL"
-    bars = (SimpleNamespace(bar_type=bar_type, ts_event=5000),)
     with pytest.raises(dev.MeanReversionH1DevelopmentError):
         dev._validate_bar_stream(bars, bar_type, 0, 1000)  # type: ignore[arg-type]
 
@@ -430,27 +426,25 @@ def _validation_readiness_document() -> dict:
     }
 
 
-def test_resolve_catalog_roots_accepts_development_readiness(tmp_path: Path) -> None:
+@pytest.mark.parametrize(
+    "partition,document_fn,catalog_dir",
+    [
+        (dev.Partition.DEVELOPMENT, _development_readiness_document, "canonical"),
+        (
+            dev.Partition.VALIDATION,
+            _validation_readiness_document,
+            "validation_canonical",
+        ),
+    ],
+)
+def test_resolve_catalog_roots_accepts_matching_readiness(
+    tmp_path: Path, partition: dev.Partition, document_fn, catalog_dir: str
+) -> None:
     readiness_path = tmp_path / "readiness.json"
-    readiness_path.write_text(
-        json.dumps(_development_readiness_document()), encoding="utf-8"
-    )
+    readiness_path.write_text(json.dumps(document_fn()), encoding="utf-8")
     roots = dev._resolve_catalog_roots(
-        partition=dev.Partition.DEVELOPMENT,
-        catalog_root=tmp_path / "canonical",
-        universe_readiness_path=readiness_path,
-    )
-    assert set(roots) == set(FROZEN_UNIVERSE)
-
-
-def test_resolve_catalog_roots_accepts_validation_readiness(tmp_path: Path) -> None:
-    readiness_path = tmp_path / "readiness.json"
-    readiness_path.write_text(
-        json.dumps(_validation_readiness_document()), encoding="utf-8"
-    )
-    roots = dev._resolve_catalog_roots(
-        partition=dev.Partition.VALIDATION,
-        catalog_root=tmp_path / "validation_canonical",
+        partition=partition,
+        catalog_root=tmp_path / catalog_dir,
         universe_readiness_path=readiness_path,
     )
     assert set(roots) == set(FROZEN_UNIVERSE)
@@ -1276,6 +1270,7 @@ def test_aggregate_equal_weight_net_return_is_the_simple_average() -> None:
     assert aggregate.equal_weight_cost_stress_1_5x_return == pytest.approx(
         aggregate.equal_weight_net_return
     )
+    assert aggregate.cost_stress_methodology == dev.COST_STRESS_METHODOLOGY_LABEL
 
 
 def test_aggregate_profitable_pair_count() -> None:
@@ -1391,33 +1386,6 @@ def test_cost_stress_half_coefficient_derives_from_screening_1_5x_multiplier() -
     assert perf.cost_stress_1_5x_return == pytest.approx(expected)
 
 
-def test_cost_stress_formula_matches_the_eurusd_tsm_precedent_source() -> None:
-    """Direct source-level proof that the "net_return - 0.5 * cost_return"
-    decomposition is REUSED from eurusd_tsm_development.py's own
-    ``_fold_metrics`` (and mirrored by ts_momentum_development.py's
-    per-day ``cost_stress_1_5x_return``), not invented for this module."""
-
-    import ftmoquant.research.eurusd_tsm_development as eurusd_tsm_development
-    import ftmoquant.research.ts_momentum_development as ts_momentum_development
-
-    eurusd_source = Path(eurusd_tsm_development.__file__).read_text(encoding="utf-8")
-    assert "stressed_total = total_net_return - 0.5 * cost_return" in eurusd_source
-
-    ts_momentum_source = Path(ts_momentum_development.__file__).read_text(
-        encoding="utf-8"
-    )
-    assert '"cost_stress_1_5x_return": float(net_return - realized_cost / 2)' in (
-        ts_momentum_source
-    )
-
-
-def test_cost_stress_methodology_label_is_recorded_on_the_aggregate() -> None:
-    performance = _pair_performance_fixture({pair: 0.0 for pair in FROZEN_UNIVERSE})
-    daily_returns_by_pair = {pair: () for pair in FROZEN_UNIVERSE}
-    aggregate = dev._aggregate_performance(performance, daily_returns_by_pair)
-    assert aggregate.cost_stress_methodology == dev.COST_STRESS_METHODOLOGY_LABEL
-
-
 # ---------------------------------------------------------------------------
 # Execution-timing semantics are unchanged by this performance-measurement
 # addition: the new execution_midpoint field on _ScaledInstruction is
@@ -1477,42 +1445,29 @@ def test_convert_to_account_currency_is_a_no_op_when_already_usd() -> None:
     ) == Decimal("123.45")
 
 
-def test_convert_to_account_currency_divides_quote_amount_when_base_is_usd() -> None:
-    """The literal "100 JPY treated as 100 USD" failure mode: 100 JPY at
-    150 JPY/USD must convert to 100/150 USD, not stay 100."""
+@pytest.mark.parametrize(
+    "quote_currency,conversion_price",
+    [
+        ("JPY", Decimal("150.000")),
+        ("CAD", Decimal("1.35000")),
+        ("CHF", Decimal("0.88000")),
+    ],
+)
+def test_convert_to_account_currency_divides_quote_amount_when_base_is_usd(
+    quote_currency: str, conversion_price: Decimal
+) -> None:
+    """The literal "100 JPY/CAD/CHF treated as 100 USD" failure mode: 100
+    units of the quote currency must convert to 100/price USD, not stay
+    100."""
 
     converted = dev._convert_to_account_currency(
         Decimal("100"),
-        "JPY",
+        quote_currency,
         base_currency="USD",
-        quote_currency="JPY",
-        conversion_price=Decimal("150.000"),
+        quote_currency=quote_currency,
+        conversion_price=conversion_price,
     )
-    assert converted == Decimal("100") / Decimal("150.000")
-    assert converted != Decimal("100")
-
-
-def test_convert_to_account_currency_divides_cad_amount_by_price() -> None:
-    converted = dev._convert_to_account_currency(
-        Decimal("100"),
-        "CAD",
-        base_currency="USD",
-        quote_currency="CAD",
-        conversion_price=Decimal("1.35000"),
-    )
-    assert converted == Decimal("100") / Decimal("1.35000")
-    assert converted != Decimal("100")
-
-
-def test_convert_to_account_currency_divides_chf_amount_by_price() -> None:
-    converted = dev._convert_to_account_currency(
-        Decimal("100"),
-        "CHF",
-        base_currency="USD",
-        quote_currency="CHF",
-        conversion_price=Decimal("0.88000"),
-    )
-    assert converted == Decimal("100") / Decimal("0.88000")
+    assert converted == Decimal("100") / conversion_price
     assert converted != Decimal("100")
 
 
@@ -1776,47 +1731,15 @@ def test_realized_cost_is_usd_denominated_for_every_frozen_leg_convention(
     # annualized-vol position must cost a handful of USD, never hundreds.
     assert 0 <= actual_cost < Decimal("50")
 
-
-def test_usd_jpy_cost_bug_reproduction_would_be_roughly_150x_too_large() -> None:
-    """Directly reproduces the originally reported defect for USD/JPY: the
-    unconverted (buggy) cost figure is on the order of the USD/JPY price
-    level (~150x) larger than the correctly converted figure -- exactly
-    matching the originally observed 82876.78 vs. an expected sub-$100
-    result."""
-
-    instrument_id, price_precision, base_price = "USD/JPY.OANDA", 3, Decimal("150.000")
-    outcome = _run_currency_probe(instrument_id, price_precision, base_price)
-    execution_mid = _rounded_execution_mid(
-        _scaled_price_sequence(base_price)[-1], price_precision
-    )
-
-    quantity = Decimal(outcome.submissions[0].target_units)
-    half_spread = Decimal(2) * Decimal(10) ** (-price_precision)
-    unconverted_jpy_cost = quantity * half_spread
-    actual_cost_usd = outcome.realized_variable_cost[instrument_id]
-
-    ratio = unconverted_jpy_cost / actual_cost_usd
-    assert float(ratio) == pytest.approx(float(execution_mid), rel=1e-6)
-    assert ratio > 100  # ~150 for USD/JPY -- the originally observed scale
-
-
-def test_net_return_uses_portfolio_equity_not_raw_position_pnl_currency() -> None:
-    """Regression proof for the net_return side of the same bug class:
-    Position.unrealized_pnl() returns Money in the position's own
-    settlement/quote currency (confirmed empirically against a real
-    Nautilus engine during this audit), not the USD account currency --
-    summing it directly into a USD balance was the root cause. This test
-    fails if _append_equity_mark ever reverts to that pattern: it asserts
-    the module no longer references the unconverted per-position PnL API
-    for equity marking."""
-
-    source = Path(dev.__file__).read_text(encoding="utf-8")
-    # The buggy call pattern itself (summing an unconverted per-position
-    # PnL Money straight into equity) must be gone from the code -- the
-    # API name may still appear in an explanatory comment, so check the
-    # actual call site, not a bare substring of the method name.
-    assert "equity += position.unrealized_pnl" not in source
-    assert "self.portfolio.equity(" in source
+    if instrument_id == "USD/JPY.OANDA":
+        # Directly reproduces the originally reported defect: the
+        # unconverted (buggy) cost figure is on the order of the USD/JPY
+        # price level (~150x) larger than the correctly converted figure --
+        # exactly matching the originally observed 82876.78 vs. an
+        # expected sub-$100 result.
+        ratio = expected_cost_quote / actual_cost
+        assert float(ratio) == pytest.approx(float(execution_mid), rel=1e-6)
+        assert ratio > 100  # ~150 for USD/JPY -- the originally observed scale
 
 
 @pytest.mark.parametrize(

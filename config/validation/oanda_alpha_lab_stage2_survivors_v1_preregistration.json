@@ -1,0 +1,73 @@
+{
+  "cost_model": {
+    "label": "fixed_mean_half_spread_estimated_from_full_development",
+    "recalibration_from_validation_outcomes": "forbidden",
+    "stress_multiplier": 1.5
+  },
+  "created_at_utc": "2026-08-18T07:44:00.578084Z",
+  "development_lineage": {
+    "alpha_lab_config_sha256": "b31334b2b603b0f92350e82c36a7541407f4a15bb1d5b6e18b5247c4b1fc5d29",
+    "development_end_exclusive_utc": "2023-04-11T00:00:00Z",
+    "development_start_utc": "2019-03-11T00:00:00Z",
+    "lineage_id": "oanda_fx_alpha_lab_v1"
+  },
+  "holdout_accessed": false,
+  "one_shot_policy": {
+    "failure_policy": "One-shot per family: exactly one representative configuration is evaluated per family. If a family's representative fails any of the five frozen gates, that family fails this validation stage outright -- no alternative parameter from the same family, pair exclusion, signal modification, stop/target modification, cost-model modification, timeframe change, or rerun is permitted for that family after validation results are observed.",
+    "representatives_per_family": 1,
+    "search_or_selection_after_this_point": "forbidden",
+    "total_configurations": 3
+  },
+  "preregistration_semantic_sha256": "a9582db381d68f83bb77887f477a43c64fdae68c719f52a108da782bdbb52522",
+  "preregistration_version": "oanda-alpha-lab-validation-preregistration-1",
+  "representative_selection_algorithm": {
+    "one_dimensional": "Among Stage-2-passing lookbacks, choose the value minimizing the sum of absolute GRID-INDEX distances to all other passing values (not numeric distance); tie -> smaller value.",
+    "two_dimensional": "Among Stage-2-passing cells in the largest connected component, choose the cell minimizing the sum of Manhattan GRID-INDEX distances to all other cells in that component; tie -> smaller lookback, then smaller z_entry."
+  },
+  "selected_representatives": {
+    "A_time_series_momentum": {
+      "lookback": 40,
+      "strategy_id": "validation_tsm_h4_lookback40_v1",
+      "timeframe": "H4"
+    },
+    "B_donchian_breakout": {
+      "lookback": 45,
+      "strategy_id": "validation_donchian_h4_lookback45_v1",
+      "timeframe": "H4"
+    },
+    "C_short_horizon_mean_reversion": {
+      "lookback": 40,
+      "strategy_id": "validation_meanrev_h1_lookback40_z2.0_v1",
+      "timeframe": "H1",
+      "z_entry": 2.0
+    }
+  },
+  "stage2_evidence": {
+    "family_robustness_sha256": "8cc48cc9f3ae68650e95eeb22c10d29ade60b4bcf8f74a919eb4d052447f7ffa",
+    "metadata_sha256": "9ae5fc909287b804831fa7c76ea8d84d291d156b1dc77092f1cde1815174b1d2",
+    "scorecard_sha256": "ad020befc2155567bb3e4d18d795eb25a251ca4d14fd940ec3cc45e53f918c13",
+    "stage1_metadata_sha256": "eeaa88bdfba88e84a650e11ff6159e832484a9c512fdd2f7e6c97f91e46dfada"
+  },
+  "temporal_diagnostics": {
+    "fields": [
+      "positive_subperiod_count",
+      "worst_subperiod_return",
+      "median_subperiod_sharpe"
+    ],
+    "status": "reporting_only_not_a_gate",
+    "subperiod_count": 2
+  },
+  "validation_gates": {
+    "A_cross_pair_breadth": "profitable_pair_count >= 4 of 7, base cost",
+    "B_aggregate_base_profitability": "aggregate_equal_weight_return > 0, base cost",
+    "C_aggregate_cost_stress_survival": "aggregate_stressed_return > 0 at 1.5x screening costs",
+    "D_aggregate_risk_adjusted_sign": "aggregate_equal_weight_sharpe > 0",
+    "E_catastrophic_concentration_guard": "max single-pair share of total positive pair-level net profit <= 0.7; fails if total positive profit <= 0",
+    "validation_passed": "AND of all five gates A-E; no discretionary ranking"
+  },
+  "validation_partition": {
+    "end_exclusive_utc": "2024-08-21T00:00:00Z",
+    "source": "No VALIDATION partition was ever frozen for the OANDA alpha-lab lineage. Reused from ftmoquant.research.stage_g.VALIDATION_START/HOLDOUT_START -- the only validation boundary already frozen anywhere in this repository, chained off the identical DEVELOPMENT_END_EXCLUSIVE date the OANDA lineage's own DEVELOPMENT window also uses.",
+    "start_utc": "2023-04-11T00:00:00Z"
+  }
+}

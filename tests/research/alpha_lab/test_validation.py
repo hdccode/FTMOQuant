@@ -66,14 +66,17 @@ _PAIRS = (
 # ---------------------------------------------------------------------------
 
 
-def test_select_1d_representative_reproduces_the_frozen_donchian_region() -> None:
-    passing = {35, 40, 45, 50, 55}
-    assert select_1d_representative(DONCHIAN_H4_LOOKBACKS, passing) == 45
-
-
-def test_select_1d_representative_reproduces_the_frozen_tsm_region() -> None:
-    passing = {30, 40, 50, 60}
-    assert select_1d_representative(TSM_H4_LOOKBACKS, passing) == 40
+@pytest.mark.parametrize(
+    "lookbacks,passing,expected",
+    [
+        (DONCHIAN_H4_LOOKBACKS, {35, 40, 45, 50, 55}, 45),
+        (TSM_H4_LOOKBACKS, {30, 40, 50, 60}, 40),
+    ],
+)
+def test_select_1d_representative_reproduces_the_frozen_region(
+    lookbacks: list[int], passing: set[int], expected: int
+) -> None:
+    assert select_1d_representative(lookbacks, passing) == expected
 
 
 def test_select_2d_representative_reproduces_the_frozen_mean_reversion_region() -> None:
@@ -126,12 +129,9 @@ def test_select_1d_representative_ignores_input_list_order() -> None:
     )
 
 
-def test_select_1d_representative_rejects_empty_passing_set() -> None:
+def test_select_representatives_reject_empty_passing_sets() -> None:
     with pytest.raises(ValueError):
         select_1d_representative(DONCHIAN_H4_LOOKBACKS, set())
-
-
-def test_select_2d_representative_rejects_empty_passing_set() -> None:
     with pytest.raises(ValueError):
         select_2d_representative(
             MEAN_REVERSION_LOOKBACKS, MEAN_REVERSION_Z_ENTRIES, set()
@@ -359,20 +359,23 @@ def test_validation_execution_cannot_occur_without_a_valid_preregistration() -> 
 # ---------------------------------------------------------------------------
 
 
-def test_development_root_path_is_rejected_for_validation() -> None:
-    with pytest.raises(AlphaLabValidationError):
-        _reject_forbidden_path(Path("/data/oanda_fx_alpha_lab_v1/development_root/EURUSD"))
-
-
-def test_holdout_root_path_is_rejected_for_validation() -> None:
-    with pytest.raises(AlphaLabValidationError):
-        _reject_forbidden_path(Path("/data/oanda_fx_alpha_lab_v1/holdout_root/EURUSD"))
-    with pytest.raises(AlphaLabValidationError):
-        _reject_forbidden_path(Path("/data/final_holdout/EURUSD"))
-
-
-def test_a_legitimate_validation_path_is_accepted() -> None:
-    _reject_forbidden_path(Path("/data/oanda_fx_alpha_lab_v1/validation_root/EURUSD"))
+@pytest.mark.parametrize(
+    "path,should_raise",
+    [
+        (Path("/data/oanda_fx_alpha_lab_v1/development_root/EURUSD"), True),
+        (Path("/data/oanda_fx_alpha_lab_v1/holdout_root/EURUSD"), True),
+        (Path("/data/final_holdout/EURUSD"), True),
+        (Path("/data/oanda_fx_alpha_lab_v1/validation_root/EURUSD"), False),
+    ],
+)
+def test_reject_forbidden_path_accepts_only_the_validation_root(
+    path: Path, should_raise: bool
+) -> None:
+    if should_raise:
+        with pytest.raises(AlphaLabValidationError):
+            _reject_forbidden_path(path)
+    else:
+        _reject_forbidden_path(path)  # must not raise
 
 
 def test_out_of_partition_observations_are_rejected() -> None:
@@ -455,7 +458,7 @@ def test_verify_validation_readiness_accepts_a_valid_document() -> None:
     assert config.partition == "VALIDATION"
 
 
-def test_development_readiness_is_rejected_as_wrong_partition() -> None:
+def _readiness_wrong_partition_document() -> dict:
     # The real, frozen DEVELOPMENT readiness shape: no "partition" field,
     # and readiness_version is the DEVELOPMENT one -- must be rejected.
     payload = {
@@ -469,25 +472,22 @@ def test_development_readiness_is_rejected_as_wrong_partition() -> None:
         "research_ready": True,
     }
     payload["semantic_sha256"] = _canonical_sha256(payload)
-    with pytest.raises(AlphaLabValidationError, match="partition"):
-        _verify_validation_readiness(payload, config_path=_VALIDATION_CONFIG_PATH)
+    return payload
 
 
-def test_readiness_missing_partition_field_is_rejected() -> None:
+def _readiness_missing_partition_field_document() -> dict:
     document = _valid_validation_readiness_document()
     document.pop("partition")
-    with pytest.raises(AlphaLabValidationError):
-        _verify_validation_readiness(document, config_path=_VALIDATION_CONFIG_PATH)
+    return document
 
 
-def test_readiness_tampered_self_hash_is_rejected() -> None:
+def _readiness_tampered_self_hash_document() -> dict:
     document = _valid_validation_readiness_document()
     document["research_ready"] = False  # mutate after hashing -> stale hash
-    with pytest.raises(AlphaLabValidationError, match="self-hash"):
-        _verify_validation_readiness(document, config_path=_VALIDATION_CONFIG_PATH)
+    return document
 
 
-def test_readiness_wrong_boundary_is_rejected() -> None:
+def _readiness_wrong_boundary_document() -> dict:
     config = load_oanda_alpha_lab_validation_config()
     payload = {
         "readiness_version": VALIDATION_READINESS_VERSION,
@@ -501,17 +501,33 @@ def test_readiness_wrong_boundary_is_rejected() -> None:
         "research_ready": True,
     }
     payload["semantic_sha256"] = _canonical_sha256(payload)
-    with pytest.raises(AlphaLabValidationError):
-        _verify_validation_readiness(payload, config_path=_VALIDATION_CONFIG_PATH)
+    return payload
 
 
-def test_readiness_holdout_accessed_true_is_rejected() -> None:
+def _readiness_holdout_accessed_true_document() -> dict:
     document = _valid_validation_readiness_document()
     document["holdout_accessed"] = True
     document["semantic_sha256"] = _canonical_sha256(
         {k: v for k, v in document.items() if k != "semantic_sha256"}
     )
-    with pytest.raises(AlphaLabValidationError):
+    return document
+
+
+@pytest.mark.parametrize(
+    "build_document,match",
+    [
+        (_readiness_wrong_partition_document, "partition"),
+        (_readiness_missing_partition_field_document, None),
+        (_readiness_tampered_self_hash_document, "self-hash"),
+        (_readiness_wrong_boundary_document, None),
+        (_readiness_holdout_accessed_true_document, None),
+    ],
+)
+def test_verify_validation_readiness_rejects_malformed_documents(
+    build_document, match
+) -> None:
+    document = build_document()
+    with pytest.raises(AlphaLabValidationError, match=match):
         _verify_validation_readiness(document, config_path=_VALIDATION_CONFIG_PATH)
 
 
@@ -629,37 +645,24 @@ def _validation_row(
     )
 
 
-def test_cross_pair_gate_enforced_independently() -> None:
-    passing = _evaluate_family([_validation_row(profitable_pair_count=4)])
-    failing = _evaluate_family([_validation_row(profitable_pair_count=3)])
-    assert passing.cross_pair_gate is True
-    assert failing.cross_pair_gate is False
-    # every other gate held constant -> only cross_pair_gate differs
+@pytest.mark.parametrize(
+    "field,passing_value,failing_value,gate_attr",
+    [
+        ("profitable_pair_count", 4, 3, "cross_pair_gate"),
+        ("aggregate_equal_weight_return", 0.001, 0.0, "aggregate_return_gate"),
+        ("aggregate_stressed_return", 0.001, -0.001, "stressed_return_gate"),
+        ("aggregate_equal_weight_sharpe", 0.01, -0.01, "sharpe_sign_gate"),
+    ],
+)
+def test_each_gate_is_enforced_independently(
+    field: str, passing_value: float, failing_value: float, gate_attr: str
+) -> None:
+    passing = _evaluate_family([_validation_row(**{field: passing_value})])
+    failing = _evaluate_family([_validation_row(**{field: failing_value})])
+    assert getattr(passing, gate_attr) is True
+    assert getattr(failing, gate_attr) is False
+    # every other gate held constant -> only the named gate differs
     assert passing.validation_passed is True
-    assert failing.validation_passed is False
-
-
-def test_aggregate_return_gate_enforced_independently() -> None:
-    passing = _evaluate_family([_validation_row(aggregate_equal_weight_return=0.001)])
-    failing = _evaluate_family([_validation_row(aggregate_equal_weight_return=0.0)])
-    assert passing.aggregate_return_gate is True
-    assert failing.aggregate_return_gate is False
-    assert failing.validation_passed is False
-
-
-def test_stressed_return_gate_enforced_independently() -> None:
-    passing = _evaluate_family([_validation_row(aggregate_stressed_return=0.001)])
-    failing = _evaluate_family([_validation_row(aggregate_stressed_return=-0.001)])
-    assert passing.stressed_return_gate is True
-    assert failing.stressed_return_gate is False
-    assert failing.validation_passed is False
-
-
-def test_sharpe_sign_gate_enforced_independently() -> None:
-    passing = _evaluate_family([_validation_row(aggregate_equal_weight_sharpe=0.01)])
-    failing = _evaluate_family([_validation_row(aggregate_equal_weight_sharpe=-0.01)])
-    assert passing.sharpe_sign_gate is True
-    assert failing.sharpe_sign_gate is False
     assert failing.validation_passed is False
 
 
@@ -747,7 +750,7 @@ def _synthetic_preregistration() -> dict[str, object]:
     }
 
 
-def test_run_validation_evaluates_exactly_three_representatives() -> None:
+def test_run_validation_evaluates_three_representatives_with_full_scorecard() -> None:
     datasets = {
         "H4": _synth_ds(timeframe="H4", periods=1200, freq="4h", seed=1),
         "H1": _synth_ds(timeframe="H1", periods=3000, freq="1h", seed=2),
@@ -762,15 +765,6 @@ def test_run_validation_evaluates_exactly_three_representatives() -> None:
         MEAN_REVERSION_FAMILY,
     }
 
-
-def test_validation_scorecard_has_exactly_twenty_four_rows() -> None:
-    datasets = {
-        "H4": _synth_ds(timeframe="H4", periods=1200, freq="4h", seed=1),
-        "H1": _synth_ds(timeframe="H1", periods=3000, freq="1h", seed=2),
-    }
-    result = run_validation(
-        preregistration=_synthetic_preregistration(), datasets_by_timeframe=datasets
-    )
     assert len(result.rows) == 24
     representatives = _synthetic_preregistration()["selected_representatives"]
     for family_config in representatives.values():

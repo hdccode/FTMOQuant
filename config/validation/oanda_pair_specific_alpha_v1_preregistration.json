@@ -1,0 +1,108 @@
+{
+  "candidates": [
+    {
+      "candidate_id": "A",
+      "development_evidence": {
+        "annualized_sharpe": 0.9436495178994162,
+        "maximum_drawdown": -0.0357618939486839,
+        "net_return": 0.10413525925370948,
+        "trade_count": 83
+      },
+      "family": "F2_fresh_fvg_mitigation",
+      "instrument": "USD/CAD.OANDA",
+      "parameters": {
+        "backward_search_n": 10
+      },
+      "strategy_id": "f2_h4_n10_v1",
+      "timeframe": "H4"
+    },
+    {
+      "candidate_id": "B",
+      "development_evidence": {
+        "annualized_sharpe": 1.1308192281600271,
+        "maximum_drawdown": -0.018471546577161213,
+        "net_return": 0.08730072470352024,
+        "trade_count": 72
+      },
+      "family": "F3_volatility_squeeze_breakout",
+      "instrument": "USD/JPY.OANDA",
+      "parameters": {
+        "bb_width_threshold": 0.004
+      },
+      "strategy_id": "f3_h1_thr0.004_v1",
+      "timeframe": "H1"
+    },
+    {
+      "candidate_id": "C",
+      "development_evidence": {
+        "annualized_sharpe": 0.8449043408455551,
+        "maximum_drawdown": -0.08231481832877874,
+        "net_return": 0.14915653291184228,
+        "trade_count": 306
+      },
+      "family": "B2F1_sweep_bos_retest",
+      "instrument": "USD/CAD.OANDA",
+      "parameters": {
+        "rr": 2.0,
+        "swing_lookback": 40
+      },
+      "strategy_id": "b2f1_m30_sw40_rr2.0_v1",
+      "timeframe": "M30"
+    }
+  ],
+  "created_at_utc": "2026-08-19T09:35:58.106602Z",
+  "development_lineage": {
+    "b2f1_scorecard_sha256": "e9f6a6a5041a1a642b475e4b4a91b388003530c723652fd0ce654305ca793eab",
+    "f2_f3_scorecard_sha256": "cce239fd3e362698c8f0551a724a1bef7f32231ce3cd120d14934e95418cad1b"
+  },
+  "execution_semantics": {
+    "buy_crosses": "ASK",
+    "cost_model": "native OANDA spread only, included intrinsically by which side (BID/ASK) each entry/exit crosses; no commissions, slippage, or volatility/leverage/FTMO-risk normalization invented here",
+    "entry": "first paired M1 BID/ASK observation strictly after signal-information time",
+    "interpolation": "none",
+    "long_liquidation_crosses": "BID",
+    "same_bar_collision": "stop first",
+    "sell_crosses": "BID",
+    "short_liquidation_crosses": "ASK",
+    "signals": "completed M30/H1/H4 bars only",
+    "sleeve": "independent $100,000 notional sleeve per candidate",
+    "stops_targets": "exactly as each frozen family already implements",
+    "synthetic_prices": "none"
+  },
+  "failure_policy": "One shot per candidate, independently judged. If a candidate fails gates A/B, that exact (family, pair, timeframe, parameter) configuration fails VALIDATION outright -- no adjacent parameter value from the same family (e.g. F2 backward_search_n=5/20, F3 bb_width_threshold=0.006, B2F1 rr=1.5), no pair substitution, no timeframe change, no stop/target/filter modification, no cost-model change, and no rerun is permitted for that candidate after VALIDATION results are observed.",
+  "holdout_accessed": false,
+  "one_shot_policy": {
+    "candidates_per_family": 1,
+    "pair_substitutions_after_this_point": "forbidden",
+    "parameter_changes_after_this_point": "forbidden",
+    "reruns_after_observing_results": "forbidden",
+    "total_configurations": 3
+  },
+  "preregistration_semantic_sha256": "dc912bb56fb0d963df859aaefaaeda8af680f18ba952d162f6515c045648382e",
+  "preregistration_version": "oanda-pair-specific-alpha-validation-preregistration-1",
+  "temporal_diagnostics": {
+    "fields": [
+      "positive_subperiod_count",
+      "worst_subperiod_return",
+      "median_subperiod_sharpe"
+    ],
+    "status": "reporting_only_not_a_gate",
+    "subperiod_count": 2
+  },
+  "validation_gates": {
+    "A_native_spread_positive_return": "native-spread VALIDATION net_return > 0",
+    "B_native_spread_positive_sharpe": "native-spread VALIDATION annualized_sharpe > 0",
+    "C_cost_stress": {
+      "reason": "The M1 BID/ASK trade-lifecycle engine (wick_fvg_squeeze_execution.simulate_trades) has no separate cost parameter to scale by 1.5x: native spread cost is embedded directly in which side (BID for sells/long-exits, ASK for buys/short-exits) each entry and exit crosses, not applied as an independent fee on top of a mid price. Computing a cost-stress diagnostic would require inventing a synthetic spread-widening mechanism and re-executing every trade against fabricated prices -- exactly what the task's own instructions forbid ('No ... slippage invented here', 'If implementing C would require inventing a new cost model ... DO NOT invent it'). The frozen gate is therefore A AND B only; C is not computed.",
+      "status": "not_available"
+    },
+    "no_minimum_trade_count_gate": true,
+    "no_pair_breadth_gate": "not applicable -- each candidate is an explicitly pair-specific hypothesis, not a broad-FX family",
+    "no_validation_subperiod_gate": true,
+    "validation_passed": "A AND B (C not computed; see C_cost_stress.reason)"
+  },
+  "validation_partition": {
+    "end_exclusive_utc": "2024-08-21T00:00:00Z",
+    "start_utc": "2023-04-11T00:00:00Z"
+  }
+}

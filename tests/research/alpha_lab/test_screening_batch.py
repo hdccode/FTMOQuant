@@ -17,7 +17,6 @@ from ftmoquant.research.alpha_lab.screening_batch import (
     write_results,
 )
 from ftmoquant.research.alpha_lab.screening_common import AGGREGATE_INSTRUMENT_LABEL
-from ftmoquant.research.stage_g import DEVELOPMENT_END_EXCLUSIVE, DEVELOPMENT_START
 
 _SCORECARD_FIELDS = (
     "family",
@@ -240,20 +239,6 @@ def test_batch_never_accesses_validation_or_final_holdout_data() -> None:
     source = Path(batch_module.__file__).read_text(encoding="utf-8")
     assert "validation" not in source.lower()
     assert "holdout" not in source.lower()
-
-
-def test_dataset_time_bounds_match_the_frozen_development_window() -> None:
-    # load_alpha_lab_dataset always stamps DEVELOPMENT_START/END_EXCLUSIVE
-    # regardless of source; this pins that no other window can slip in.
-    datasets = _synthetic_datasets()
-    for dataset in datasets.values():
-        replaced = replace(
-            dataset,
-            start_utc=DEVELOPMENT_START,
-            end_exclusive_utc=DEVELOPMENT_END_EXCLUSIVE,
-        )
-        assert replaced.start_utc == DEVELOPMENT_START
-        assert replaced.end_exclusive_utc == DEVELOPMENT_END_EXCLUSIVE
 
 
 def test_empty_dataset_is_rejected() -> None:

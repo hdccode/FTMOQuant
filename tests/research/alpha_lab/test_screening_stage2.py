@@ -1,11 +1,13 @@
 from __future__ import annotations
 
 import json
+from collections.abc import Sequence
 from datetime import UTC
 from pathlib import Path
 
 import numpy as np
 import pandas as pd
+import pytest
 
 from ftmoquant.research.alpha_lab.data import ALIGNMENT_POLICY, AlphaLabDataset
 from ftmoquant.research.alpha_lab.screening_batch import (
@@ -117,14 +119,10 @@ def _neutral_donchian_and_tsm_rows() -> list[ScreeningResultRow]:
     ) + _all_1d_rows(TSM_FAMILY, "lookback", TSM_H4_LOOKBACKS)
 
 
-def test_stage2_grid_has_exactly_twenty_three_configurations() -> None:
+def test_stage2_grid_matches_the_exact_specified_parameter_lists() -> None:
     grid = build_stage2_grid()
     assert len(grid) == 23
     assert len({config.strategy_id for config in grid}) == 23
-
-
-def test_stage2_grid_matches_the_exact_specified_parameter_lists() -> None:
-    grid = build_stage2_grid()
     donchian = sorted(
         int(c.parameters["lookback"]) for c in grid if c.family == DONCHIAN_FAMILY
     )
@@ -146,46 +144,83 @@ def test_stage2_grid_matches_the_exact_specified_parameter_lists() -> None:
     assert all(c.timeframe == "H1" for c in grid if c.family == MEAN_REVERSION_FAMILY)
 
 
-def test_donchian_adjacency_rule_requires_two_adjacent_passing_lookbacks() -> None:
+@pytest.mark.parametrize(
+    "family,lookbacks,other_family,other_lookbacks,passing_values,"
+    "expected_region_size,expected_region_count",
+    [
+        (
+            DONCHIAN_FAMILY,
+            DONCHIAN_H4_LOOKBACKS,
+            TSM_FAMILY,
+            TSM_H4_LOOKBACKS,
+            {50, 55},
+            2,
+            1,
+        ),
+        (
+            TSM_FAMILY,
+            TSM_H4_LOOKBACKS,
+            DONCHIAN_FAMILY,
+            DONCHIAN_H4_LOOKBACKS,
+            {25, 30, 40},
+            3,
+            1,
+        ),
+    ],
+)
+def test_1d_family_adjacency_rule_requires_two_adjacent_passing_lookbacks(
+    family: str,
+    lookbacks: Sequence[int],
+    other_family: str,
+    other_lookbacks: Sequence[int],
+    passing_values: set[int],
+    expected_region_size: int,
+    expected_region_count: int,
+) -> None:
     rows = _all_1d_rows(
-        DONCHIAN_FAMILY, "lookback", DONCHIAN_H4_LOOKBACKS, passing_values={50, 55}
-    ) + _all_1d_rows(TSM_FAMILY, "lookback", TSM_H4_LOOKBACKS)
+        family, "lookback", lookbacks, passing_values=passing_values
+    ) + _all_1d_rows(other_family, "lookback", other_lookbacks)
     summaries = {s.family: s for s in analyze_family_robustness(rows)}
-    donchian = summaries[DONCHIAN_FAMILY]
-    assert donchian.largest_contiguous_region_size == 2
-    assert donchian.survival_rule_passed is True
+    summary = summaries[family]
+    assert summary.largest_contiguous_region_size == expected_region_size
+    assert summary.contiguous_passing_region_count == expected_region_count
+    assert summary.survival_rule_passed is True
 
 
-def test_isolated_donchian_optimum_fails_family_survival() -> None:
+@pytest.mark.parametrize(
+    "family,lookbacks,other_family,other_lookbacks,passing_values",
+    [
+        (
+            DONCHIAN_FAMILY,
+            DONCHIAN_H4_LOOKBACKS,
+            TSM_FAMILY,
+            TSM_H4_LOOKBACKS,
+            {50},
+        ),
+        (
+            TSM_FAMILY,
+            TSM_H4_LOOKBACKS,
+            DONCHIAN_FAMILY,
+            DONCHIAN_H4_LOOKBACKS,
+            {60},
+        ),
+    ],
+)
+def test_isolated_1d_optimum_fails_family_survival(
+    family: str,
+    lookbacks: Sequence[int],
+    other_family: str,
+    other_lookbacks: Sequence[int],
+    passing_values: set[int],
+) -> None:
     rows = _all_1d_rows(
-        DONCHIAN_FAMILY, "lookback", DONCHIAN_H4_LOOKBACKS, passing_values={50}
-    ) + _all_1d_rows(TSM_FAMILY, "lookback", TSM_H4_LOOKBACKS)
+        family, "lookback", lookbacks, passing_values=passing_values
+    ) + _all_1d_rows(other_family, "lookback", other_lookbacks)
     summaries = {s.family: s for s in analyze_family_robustness(rows)}
-    donchian = summaries[DONCHIAN_FAMILY]
-    assert donchian.passing_configuration_count == 1
-    assert donchian.largest_contiguous_region_size == 1
-    assert donchian.survival_rule_passed is False
-
-
-def test_tsm_adjacency_rule_requires_two_adjacent_passing_lookbacks() -> None:
-    rows = _all_1d_rows(DONCHIAN_FAMILY, "lookback", DONCHIAN_H4_LOOKBACKS)
-    rows += _all_1d_rows(
-        TSM_FAMILY, "lookback", TSM_H4_LOOKBACKS, passing_values={25, 30, 40}
-    )
-    summaries = {s.family: s for s in analyze_family_robustness(rows)}
-    tsm = summaries[TSM_FAMILY]
-    assert tsm.largest_contiguous_region_size == 3
-    assert tsm.contiguous_passing_region_count == 1
-    assert tsm.survival_rule_passed is True
-
-
-def test_isolated_tsm_optimum_fails_family_survival() -> None:
-    rows = _all_1d_rows(
-        DONCHIAN_FAMILY, "lookback", DONCHIAN_H4_LOOKBACKS
-    ) + _all_1d_rows(TSM_FAMILY, "lookback", TSM_H4_LOOKBACKS, passing_values={60})
-    summaries = {s.family: s for s in analyze_family_robustness(rows)}
-    tsm = summaries[TSM_FAMILY]
-    assert tsm.survival_rule_passed is False
+    summary = summaries[family]
+    assert summary.passing_configuration_count == 1
+    assert summary.largest_contiguous_region_size == 1
+    assert summary.survival_rule_passed is False
 
 
 def test_mean_reversion_connected_region_rule_requires_three_connected_cells() -> None:

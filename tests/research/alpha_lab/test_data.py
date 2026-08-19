@@ -39,30 +39,18 @@ def _frame(timestamps: list[str], base: float) -> pd.DataFrame:
     )
 
 
-def test_assembled_index_is_utc_and_sorted() -> None:
+def test_assembled_index_is_utc_sorted_and_instrument_order_is_alphabetical() -> None:
     per_instrument = {
-        "B/USD.X": _frame(["2020-01-01T02:00:00Z", "2020-01-01T01:00:00Z"], 2.0),
-        "A/USD.X": _frame(["2020-01-01T02:00:00Z", "2020-01-01T01:00:00Z"], 1.0),
-    }
-    dataset = assemble_aligned_dataset(
-        per_instrument=per_instrument,
-        instrument_ids=("B/USD.X", "A/USD.X"),
-        timeframe="H1",
-    )
-    assert str(dataset.close.index.tz) == "UTC"
-    assert list(dataset.close.index) == sorted(dataset.close.index)
-
-
-def test_deterministic_instrument_ordering_is_alphabetical() -> None:
-    per_instrument = {
-        "GBP/USD.X": _frame(["2020-01-01T01:00:00Z"], 1.3),
-        "EUR/USD.X": _frame(["2020-01-01T01:00:00Z"], 1.1),
+        "GBP/USD.X": _frame(["2020-01-01T02:00:00Z", "2020-01-01T01:00:00Z"], 1.3),
+        "EUR/USD.X": _frame(["2020-01-01T02:00:00Z", "2020-01-01T01:00:00Z"], 1.1),
     }
     dataset = assemble_aligned_dataset(
         per_instrument=per_instrument,
         instrument_ids=("GBP/USD.X", "EUR/USD.X"),
         timeframe="H1",
     )
+    assert str(dataset.close.index.tz) == "UTC"
+    assert list(dataset.close.index) == sorted(dataset.close.index)
     assert dataset.instrument_ids == ("EUR/USD.X", "GBP/USD.X")
     assert list(dataset.close.columns) == ["EUR/USD.X", "GBP/USD.X"]
 
@@ -245,21 +233,17 @@ def test_oanda_discovery_rejects_catalog_tree_hash_mismatch(tmp_path: Any) -> No
         )
 
 
-def test_dukascopy_source_requires_plan_path(tmp_path: Any) -> None:
-    with pytest.raises(AlphaLabDataError, match="plan_path"):
+@pytest.mark.parametrize(
+    "source,match",
+    [("dukascopy", "plan_path"), (cast(Any, "unknown"), "unsupported source")],
+)
+def test_invalid_source_configuration_is_rejected(
+    tmp_path: Any, source: Any, match: str
+) -> None:
+    with pytest.raises(AlphaLabDataError, match=match):
         load_alpha_lab_dataset(
             readiness_path=tmp_path / "readiness.json",
             development_root_dir=tmp_path / "development",
             timeframe="H1",
-            source="dukascopy",
-        )
-
-
-def test_unsupported_source_is_rejected(tmp_path: Any) -> None:
-    with pytest.raises(AlphaLabDataError, match="unsupported source"):
-        load_alpha_lab_dataset(
-            readiness_path=tmp_path / "readiness.json",
-            development_root_dir=tmp_path / "development",
-            timeframe="H1",
-            source=cast(Any, "unknown"),
+            source=source,
         )

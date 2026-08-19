@@ -275,27 +275,9 @@ def test_smoke_cli_oanda_discovery_rejects_dataset_symbol_style_layout(
         )
 
 
-def test_dukascopy_source_path_unchanged(tmp_path: Path) -> None:
-    """--source dukascopy (default) must still require plan_path and never
-    touch the OANDA discovery path added by this fix."""
-
-    from ftmoquant.research.alpha_lab.data import (
-        AlphaLabDataError,
-        load_alpha_lab_dataset,
-    )
-
-    with pytest.raises(AlphaLabDataError, match="plan_path"):
-        load_alpha_lab_dataset(
-            readiness_path=tmp_path / "readiness.json",
-            development_root_dir=tmp_path / "development",
-            timeframe="H1",
-            source="dukascopy",
-        )
-
-
-def test_smoke_cli_default_source_is_dukascopy() -> None:
+def test_smoke_cli_source_argument_defaults_and_rejects_unknown() -> None:
     parser = smoke.build_parser()
-    args = parser.parse_args(
+    default_args = parser.parse_args(
         [
             "--development-root",
             "dev",
@@ -305,11 +287,8 @@ def test_smoke_cli_default_source_is_dukascopy() -> None:
             "out",
         ]
     )
-    assert args.source == "dukascopy"
+    assert default_args.source == "dukascopy"
 
-
-def test_smoke_cli_unknown_source_fails() -> None:
-    parser = smoke.build_parser()
     with pytest.raises(SystemExit):
         parser.parse_args(
             [

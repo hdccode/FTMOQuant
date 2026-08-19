@@ -44,6 +44,8 @@ ftmoquant-prepare-leo-gbpusd-development-cache = "ftmoquant.research.leo_gbpusd_
 ftmoquant-evaluate-usd-macro-surprise-momentum-development = "ftmoquant.research.usd_macro_surprise_momentum_development:main"
 ftmoquant-evaluate-carver-trend-carry-ftmo5-development = "ftmoquant.research.carver_trend_carry_ftmo5_development:main"
 ftmoquant-evaluate-eurusd-tsm-development = "ftmoquant.research.eurusd_tsm_development:main"
+ftmoquant-evaluate-mean-reversion-h1-development = "ftmoquant.research.mean_reversion_h1_development:main"
+ftmoquant-evaluate-usdcad-sweep-bos-retest = "ftmoquant.research.usdcad_sweep_bos_retest_development:main"
 ftmoquant-validate-eurusd-tsm = "ftmoquant.research.eurusd_tsm_validation:main"
 ftmoquant-acquire-carver-oanda-development = "ftmoquant.data.oanda_development:main"
 ftmoquant-acquire-oanda-alpha-lab-development = "ftmoquant.data.oanda_alpha_lab_development:main"
@@ -59,6 +61,14 @@ ftmoquant-alpha-screening-batch = "ftmoquant.research.alpha_lab.screening_batch:
 ftmoquant-alpha-screening-stage2 = "ftmoquant.research.alpha_lab.screening_stage2:main"
 ftmoquant-alpha-validation-preregister = "ftmoquant.research.alpha_lab.validation:preregister_main"
 ftmoquant-alpha-validation-run = "ftmoquant.research.alpha_lab.validation:main"
+ftmoquant-alpha-pair-specific-validation-preregister = "ftmoquant.research.alpha_lab.pair_specific_validation:preregister_main"
+ftmoquant-alpha-pair-specific-validation-run = "ftmoquant.research.alpha_lab.pair_specific_validation:main"
+ftmoquant-ftmo-mc-path-diagnostics = "ftmoquant.research.ftmo_pass_probability.cli:path_diagnostics_main"
+ftmoquant-ftmo-mc-sizing-screen = "ftmoquant.research.ftmo_pass_probability.cli:sizing_screen_main"
+ftmoquant-ftmo-mc-sizing-screen-refinement = "ftmoquant.research.ftmo_pass_probability.cli:sizing_screen_refinement_main"
+ftmoquant-ftmo-mc-precision-run = "ftmoquant.research.ftmo_pass_probability.cli:precision_run_main"
+ftmoquant-ftmo-mc-validation-diagnostic = "ftmoquant.research.ftmo_pass_probability.cli:validation_diagnostic_main"
+ftmoquant-ftmo-mc-alpha-diagnostic = "ftmoquant.research.ftmo_pass_probability.cli:alpha_diagnostic_main"
 
 [dependency-groups]
 dev = [
