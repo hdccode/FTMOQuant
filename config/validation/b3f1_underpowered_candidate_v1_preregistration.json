@@ -1,0 +1,31 @@
+{
+  "preregistration_version": "b3f1-underpowered-candidate-v1",
+  "created_at_utc": "2026-08-19T22:18:49.287943+00:00",
+  "selected_candidate": {
+    "candidate_id": "U2",
+    "family_id": "B3F1_spread_mean_reversion",
+    "sleeve_id": "USD/CAD.OANDA__USD/CHF.OANDA",
+    "formation_window": 240,
+    "z_entry": "1.5",
+    "z_stop": "3.5"
+  },
+  "disclosure": {
+    "original_b3f1_preregistered_screen_result": "FAILED -- trade_count < 50 for every B3F1 configuration in this sleeve pairing, including this exact candidate; no original connected passing region existed",
+    "selection_protocol": "This candidate was selected under a POST-SCREEN EXPLORATORY underpowered-resolution protocol (.artifacts/research_audits/b3f1_underpowered_resolution_v1/), NOT under the original B3F1 preregistered family-survival rule. It was mechanically chosen from exactly two frozen candidates (U1, U2) that both passed a fixed set of post-hoc economic/robustness/bootstrap-uncertainty criteria -- it was never selected by searching neighbouring parameter cells or comparing alternative strategy families.",
+    "why_validation_is_the_independent_confirmation": "Because this candidate was chosen via an exploratory, post-hoc statistical-power argument rather than the original frozen preregistered screen, its DEVELOPMENT evidence alone cannot establish genuine alpha -- an independent one-shot VALIDATION evaluation is the only remaining unbiased test.",
+    "no_rescue_after_validation": "One-shot: if this candidate fails VALIDATION, no alternative parameter, pair substitution, stop/target modification, cost-model change, timeframe change, or rerun is permitted for it, and no further underpowered-resolution protocol may be created for B3F1."
+  },
+  "development_evidence": {
+    "n_trades": 38,
+    "native_expectancy_usd": "77.29098080081445089966794568",
+    "native_profit_factor": "1.379152339419122047734882975",
+    "stressed_1_5x_expectancy_usd": "69.75598954148976579854555755",
+    "bootstrap_p_native_expectancy_gt_0": 0.8813,
+    "bootstrap_p_stressed_expectancy_gt_0": 0.858,
+    "leave_one_out_fraction_expectancy_positive": 1.0
+  },
+  "resolution_audit_directory": ".artifacts/research_audits/b3f1_underpowered_resolution_v1/",
+  "resolution_summary_sha256": "baed2aadf505ffdb1a01e3503f3087d734eff806a22fde338be1be04f79fdcaa",
+  "validation_accessed": false,
+  "holdout_accessed": false
+}

@@ -1,0 +1,86 @@
+{
+  "correction_protocol_version": "batch5-bc-implementation-correction-v1",
+  "correction_protocol_semantic_sha256": "0d534da4717487fa667259ed556a5bc52214fe36e2e3c3d526d096f784a4b454",
+  "created_at_utc": "2026-08-24T00:00:00Z",
+  "scope": {
+    "included_families": [
+      "B5B_direct_audcad_mean_reversion",
+      "B5C_daily_fx_overreaction_reversal"
+    ],
+    "excluded_family": "B5A_cftc_dealer_demand_shock_fx",
+    "b5a_policy": "immutable_reference_only; do_not_modify_or_rerun"
+  },
+  "frozen_identities": {
+    "original_batch5_preregistration_semantic_sha256": "603c3a80427129b5c3758460c8cce5bc21947546520a3ef38a6e1c42e53fcbdf",
+    "cftc_availability_amendment_semantic_sha256": "57c406f9c3c84ab983b3fb0ba3cca7e5e7b0ee9d39c274fa7c58f93bc766a613",
+    "original_development_artifact_root": ".artifacts/alpha_lab/batch5_three_fx_alpha_families_v1",
+    "original_development_artifact_hash_manifest_sha256": "8400ac4093e07a98d7e4ac673a83cc8b11bd259bf1597cd96d067fbdd617c878",
+    "original_development_artifact_members": {
+      "diagnostics_summary.json": "922f083d67ccfea5e7e64d0b3cbeebc950e069452981248b60369109bfd90c85",
+      "family_summary.csv": "bd507bdcf9886cc3197917713b0899d2d96adb0b9425cf13f17f2d40f80a2555",
+      "metadata.json": "b1f907235de6305549fcb5fec5744699375ddabccd4d45cdcabba6bd207cb2e6",
+      "selection_summary.json": "a297f02f51cb3be689e10a8439bd447551ed039f4365645f18d64357f7ccdf2f",
+      "sleeve_scorecard.csv": "5f2fa93bd0a933af9c9b1af33558cc5d5e9deee3597b4dfa0b092dc8e2a5c634"
+    }
+  },
+  "forensic_audit": {
+    "B5A_cftc_dealer_demand_shock_fx": "CLEAN_PREREGISTERED_NEAR_MISS",
+    "B5B_direct_audcad_mean_reversion": "IMPLEMENTATION_OR_DATA_DEFECT",
+    "B5C_daily_fx_overreaction_reversal": "IMPLEMENTATION_OR_DATA_DEFECT",
+    "demonstrated_defect_count": 3
+  },
+  "corrections": [
+    {
+      "id": "B5_CORRECTION_1_M1_BOUNDARY_COMPLETION",
+      "defect": "The daily builder treated an OANDA M1 candle start timestamp equal to the New York 17:00 boundary as a completed boundary close, although that candle completes one minute later.",
+      "frozen_faithful_correction": "For boundary T use only the genuine paired native M1 candle with ts_event T minus one minute and completion time T; use its midpoint close.",
+      "prohibited": [
+        "ts_event equal to T",
+        "interpolation",
+        "forward fill",
+        "backward fill",
+        "synthetic boundary",
+        "all-interior-minute completeness requirement"
+      ]
+    },
+    {
+      "id": "B5_CORRECTION_2_B5B_INCLUSIVE_MEAN20",
+      "defect": "The B5B implementation averaged the 20 closes strictly before the current close instead of the frozen 20-close window including current.",
+      "frozen_faithful_correction": "For completed day t compute mean20_t over C[t-19] through C[t], exactly 20 closes including current once.",
+      "prohibited": [
+        "previous-20 mean",
+        "21 observations",
+        "z-score",
+        "new threshold",
+        "lagged mean"
+      ]
+    },
+    {
+      "id": "B5_CORRECTION_3_DEVELOPMENT_EXECUTION_PARTITION_ORDER",
+      "defect": "The corrected orchestrator submitted legitimate pre-DEVELOPMENT warm-up signals to execution before applying the post-execution DEVELOPMENT trade filter, causing non-USD crosses to request unavailable pre-DEVELOPMENT conversion quotes.",
+      "frozen_faithful_correction": "Preserve all warm-up observations for indicator formation, then generically admit only signals/events with DEVELOPMENT_START <= signal_timestamp < DEVELOPMENT_END_EXCLUSIVE before constructing or submitting executable intents; retain the post-execution trade partition as a second firewall.",
+      "prohibited": [
+        "extending canonical conversion data before DEVELOPMENT_START",
+        "additional data acquisition",
+        "discarding warm-up observations before indicator formation",
+        "executing a pre-DEVELOPMENT signal whose fill occurs later",
+        "changing signals, parameters, costs, or execution prices"
+      ]
+    }
+  ],
+  "governance": {
+    "corrected_development_execution_permitted_because": "The frozen B5B and B5C hypotheses were not faithfully implemented by the original DEVELOPMENT execution.",
+    "corrected_result_status": "DEVELOPMENT evidence only",
+    "original_result_status": "immutable and not reinterpreted",
+    "not_parameter_tuning": true,
+    "not_threshold_relaxation": true,
+    "not_sign_inversion": true,
+    "not_pair_selection": true,
+    "not_strategy_rescue": true,
+    "original_gates_and_breadth_unchanged": true,
+    "validation_access_prohibited": true,
+    "holdout_access_prohibited": true,
+    "financing_cost_invention_prohibited": true
+  },
+  "corrected_output": ".artifacts/alpha_lab/batch5_bc_corrected_development_v1"
+}

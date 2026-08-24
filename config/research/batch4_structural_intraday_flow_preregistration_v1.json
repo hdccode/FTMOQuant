@@ -1,0 +1,734 @@
+{
+  "cost_stress": {
+    "application": "symmetrically widen each spread before execution and rerun identical logic",
+    "multipliers": [
+      1.5,
+      2.0
+    ],
+    "post_hoc_cost_scalar_forbidden": true,
+    "reuse_exact_function": "ftmoquant.research.alpha_lab.cost_stress.widen_bid_ask_frame"
+  },
+  "created_at_utc": "2026-08-24T12:00:00Z",
+  "data_firewall": {
+    "backtest_run": false,
+    "data_loader_imports_allowed_in_module": false,
+    "development_prices_or_returns_accessed": false,
+    "final_holdout_accessed": false,
+    "monte_carlo_run": false,
+    "permitted": [
+      "source code",
+      "methodology configs",
+      "metadata",
+      "literature references",
+      "pure calendar/timezone calculations"
+    ],
+    "validation_prices_or_results_accessed": false
+  },
+  "deferred_B4F2": {
+    "future_requirements": [
+      "synchronized M1 returns",
+      "causal lagged predictor only",
+      "strict first-later execution",
+      "dependence-preserving pair mapping",
+      "native spread from outset",
+      "no contemporaneous leakage",
+      "no arbitrary pair cherry-picking",
+      "explicit latency sensitivity"
+    ],
+    "status": "recorded_only_not_part_of_B4F1_not_implemented"
+  },
+  "development_diagnostics": {
+    "other_report_fields": [
+      "monthly_positive_profit_concentration",
+      "weekday_breakdown",
+      "long_short_breakdown_where_structurally_applicable",
+      "session_and_year_breakdown",
+      "trade_pnl_skewness_and_kurtosis",
+      "largest_winning_trade_share_of_total_positive_profit",
+      "stop_target_time_exit_fractions_where_applicable",
+      "mean_and_median_holding_minutes",
+      "completed_trade_count_per_calendar_year",
+      "spread_cost_as_percent_of_gross_edge"
+    ],
+    "rolling_expectancy_trade_windows": [
+      50,
+      100
+    ],
+    "rolling_report_fields": [
+      "median_expectancy",
+      "fraction_positive_windows"
+    ],
+    "status": "report_only_never_gate_rank_filter_or_rescue"
+  },
+  "development_gates": {
+    "A_opportunity_density": {
+      "completed_trades_gte": 250
+    },
+    "B_native_expectancy": {
+      "expectancy_usd_per_trade_gt": 0
+    },
+    "C_native_profit_factor": {
+      "profit_factor_gt": 1.1
+    },
+    "D_temporal_stability": {
+      "chronological_development_fold_count": 4,
+      "positive_net_return_folds_gte": 3,
+      "reuse": "Batch-3 v2 frozen chronological DEVELOPMENT folds"
+    },
+    "E_exceptional_winner_dependence": {
+      "ranking": "realized P&L descending; equal P&L removes earlier UTC exit first",
+      "remaining_expectancy_usd_per_trade_gt": 0,
+      "remove": "top ceil(5%) of profitable completed trades only"
+    },
+    "F_quarter_concentration": {
+      "attribution": "UTC calendar quarter of trade exit",
+      "denominator": "total strictly positive DEVELOPMENT realized P&L",
+      "max_single_quarter_share_lte": 0.4,
+      "nonpositive_denominator": "fail_closed"
+    },
+    "G_cost_stress": {
+      "expectancy_usd_per_trade_gt_at_each": 0,
+      "required_multipliers": [
+        1.5,
+        2.0
+      ]
+    },
+    "H_parameter_neighborhood": {
+      "B4F1A": "not_applicable_no_parameter_axis; do not fabricate one",
+      "B4F1B_and_B4F1C": "duration adjacency 15-30-60 within the same phase and pair only; PRE and POST are never adjacent",
+      "min_connected_passing_region": 2,
+      "only_where_genuine_axis_exists": true
+    },
+    "all_gates_required": true,
+    "scope": "each executable pair-sleeve x frozen configuration"
+  },
+  "development_to_validation": {
+    "after_failure": "retire_no_rescue",
+    "eligibility": "mechanically selected DEVELOPMENT survivors only",
+    "number_proceeding": 1,
+    "one_shot_validation_gates_all_required": {
+      "native_annualized_sharpe_gt": 0,
+      "native_net_return_gt": 0,
+      "stress_1_5x_expectancy_usd_per_trade_gt": 0
+    },
+    "representative_ranking": [
+      "highest median sleeve expectancy",
+      "highest median sleeve profit factor",
+      "lowest median sleeve max-quarter positive-profit concentration",
+      "highest aggregate completed trade count",
+      "lexicographically smallest strategy_id"
+    ],
+    "validation_access_in_this_task": false
+  },
+  "execution_contract_for_future_implementation": {
+    "data": "native genuine paired OANDA M1 BID/ASK",
+    "entry": "first strictly-later paired M1 observation after entry decision timestamp",
+    "exit": "first strictly-later paired M1 observation after frozen exit timestamp",
+    "fills": "BUY at ASK and SELL at BID; exits use the opposite executable side",
+    "forbidden": [
+      "interpolation",
+      "midpoint_fills",
+      "post_hoc_fee_subtraction",
+      "price_trigger",
+      "ATR_filter",
+      "volatility_filter",
+      "trend_filter",
+      "news_filter",
+      "range_filter",
+      "stop_or_target_optimization"
+    ],
+    "implementation_status": "frozen_semantics_only_signals_and_execution_not_implemented",
+    "position_rule": "at most one position per pair-sleeve/configuration",
+    "risk_exit": "none; time exit only",
+    "same_local_date_only": true,
+    "sizing": "fixed USD 100000 gross notional per sleeve"
+  },
+  "families": {
+    "B4F1A_local_hours_flow_seasonality": {
+      "alpha": "clock/local institutional-customer flow only",
+      "parameter_axis": null,
+      "sleeves": [
+        {
+          "currency_tested": "AUD",
+          "directional_hypothesis": "AUD_DEPRECIATES",
+          "end_local": "17:00",
+          "entry_decision": "local start_local on each eligible business day",
+          "entry_side": "SELL",
+          "exit_decision": "same local date at end_local",
+          "pair": "AUD/USD.OANDA",
+          "sleeve_id": "B4F1A_AUD",
+          "start_local": "09:00",
+          "timezone": "Australia/Sydney"
+        },
+        {
+          "currency_tested": "EUR",
+          "directional_hypothesis": "EUR_DEPRECIATES",
+          "end_local": "16:00",
+          "entry_decision": "local start_local on each eligible business day",
+          "entry_side": "SELL",
+          "exit_decision": "same local date at end_local",
+          "pair": "EUR/USD.OANDA",
+          "sleeve_id": "B4F1A_EUR",
+          "start_local": "08:00",
+          "timezone": "Europe/Berlin"
+        },
+        {
+          "currency_tested": "GBP",
+          "directional_hypothesis": "GBP_DEPRECIATES",
+          "end_local": "16:00",
+          "entry_decision": "local start_local on each eligible business day",
+          "entry_side": "SELL",
+          "exit_decision": "same local date at end_local",
+          "pair": "GBP/USD.OANDA",
+          "sleeve_id": "B4F1A_GBP",
+          "start_local": "08:00",
+          "timezone": "Europe/London"
+        },
+        {
+          "currency_tested": "NZD",
+          "directional_hypothesis": "NZD_DEPRECIATES",
+          "end_local": "17:00",
+          "entry_decision": "local start_local on each eligible business day",
+          "entry_side": "SELL",
+          "exit_decision": "same local date at end_local",
+          "pair": "NZD/USD.OANDA",
+          "sleeve_id": "B4F1A_NZD",
+          "start_local": "09:00",
+          "timezone": "Pacific/Auckland"
+        },
+        {
+          "currency_tested": "CAD",
+          "directional_hypothesis": "CAD_DEPRECIATES",
+          "end_local": "16:00",
+          "entry_decision": "local start_local on each eligible business day",
+          "entry_side": "BUY",
+          "exit_decision": "same local date at end_local",
+          "pair": "USD/CAD.OANDA",
+          "sleeve_id": "B4F1A_CAD",
+          "start_local": "08:00",
+          "timezone": "America/Toronto"
+        },
+        {
+          "currency_tested": "CHF",
+          "directional_hypothesis": "CHF_DEPRECIATES",
+          "end_local": "16:00",
+          "entry_decision": "local start_local on each eligible business day",
+          "entry_side": "BUY",
+          "exit_decision": "same local date at end_local",
+          "pair": "USD/CHF.OANDA",
+          "sleeve_id": "B4F1A_CHF",
+          "start_local": "08:00",
+          "timezone": "Europe/Zurich"
+        },
+        {
+          "currency_tested": "JPY",
+          "directional_hypothesis": "JPY_DEPRECIATES",
+          "end_local": "17:00",
+          "entry_decision": "local start_local on each eligible business day",
+          "entry_side": "BUY",
+          "exit_decision": "same local date at end_local",
+          "pair": "USD/JPY.OANDA",
+          "sleeve_id": "B4F1A_JPY",
+          "start_local": "09:00",
+          "timezone": "Asia/Tokyo"
+        }
+      ],
+      "trade_rule": "one deterministic same-local-day time-exit trade per sleeve/day"
+    },
+    "B4F1B_london_fix_flow_reversal": {
+      "configurations": [
+        {
+          "configuration_id": "PRE_15m",
+          "directional_hypothesis": "USD_APPRECIATES",
+          "duration_minutes": 15,
+          "eligible_pairs": [
+            "AUD/USD.OANDA",
+            "EUR/USD.OANDA",
+            "GBP/USD.OANDA",
+            "NZD/USD.OANDA",
+            "USD/CAD.OANDA",
+            "USD/CHF.OANDA",
+            "USD/JPY.OANDA"
+          ],
+          "end_local": "16:00",
+          "pair_entry_sides": {
+            "AUD/USD.OANDA": "SELL",
+            "EUR/USD.OANDA": "SELL",
+            "GBP/USD.OANDA": "SELL",
+            "NZD/USD.OANDA": "SELL",
+            "USD/CAD.OANDA": "BUY",
+            "USD/CHF.OANDA": "BUY",
+            "USD/JPY.OANDA": "BUY"
+          },
+          "phase": "PRE",
+          "start_local": "15:45",
+          "timezone": "Europe/London"
+        },
+        {
+          "configuration_id": "PRE_30m",
+          "directional_hypothesis": "USD_APPRECIATES",
+          "duration_minutes": 30,
+          "eligible_pairs": [
+            "AUD/USD.OANDA",
+            "EUR/USD.OANDA",
+            "GBP/USD.OANDA",
+            "NZD/USD.OANDA",
+            "USD/CAD.OANDA",
+            "USD/CHF.OANDA",
+            "USD/JPY.OANDA"
+          ],
+          "end_local": "16:00",
+          "pair_entry_sides": {
+            "AUD/USD.OANDA": "SELL",
+            "EUR/USD.OANDA": "SELL",
+            "GBP/USD.OANDA": "SELL",
+            "NZD/USD.OANDA": "SELL",
+            "USD/CAD.OANDA": "BUY",
+            "USD/CHF.OANDA": "BUY",
+            "USD/JPY.OANDA": "BUY"
+          },
+          "phase": "PRE",
+          "start_local": "15:30",
+          "timezone": "Europe/London"
+        },
+        {
+          "configuration_id": "PRE_60m",
+          "directional_hypothesis": "USD_APPRECIATES",
+          "duration_minutes": 60,
+          "eligible_pairs": [
+            "AUD/USD.OANDA",
+            "EUR/USD.OANDA",
+            "GBP/USD.OANDA",
+            "NZD/USD.OANDA",
+            "USD/CAD.OANDA",
+            "USD/CHF.OANDA",
+            "USD/JPY.OANDA"
+          ],
+          "end_local": "16:00",
+          "pair_entry_sides": {
+            "AUD/USD.OANDA": "SELL",
+            "EUR/USD.OANDA": "SELL",
+            "GBP/USD.OANDA": "SELL",
+            "NZD/USD.OANDA": "SELL",
+            "USD/CAD.OANDA": "BUY",
+            "USD/CHF.OANDA": "BUY",
+            "USD/JPY.OANDA": "BUY"
+          },
+          "phase": "PRE",
+          "start_local": "15:00",
+          "timezone": "Europe/London"
+        },
+        {
+          "configuration_id": "POST_15m",
+          "directional_hypothesis": "USD_DEPRECIATES",
+          "duration_minutes": 15,
+          "eligible_pairs": [
+            "AUD/USD.OANDA",
+            "EUR/USD.OANDA",
+            "GBP/USD.OANDA",
+            "NZD/USD.OANDA",
+            "USD/CAD.OANDA",
+            "USD/CHF.OANDA",
+            "USD/JPY.OANDA"
+          ],
+          "end_local": "16:15",
+          "pair_entry_sides": {
+            "AUD/USD.OANDA": "BUY",
+            "EUR/USD.OANDA": "BUY",
+            "GBP/USD.OANDA": "BUY",
+            "NZD/USD.OANDA": "BUY",
+            "USD/CAD.OANDA": "SELL",
+            "USD/CHF.OANDA": "SELL",
+            "USD/JPY.OANDA": "SELL"
+          },
+          "phase": "POST",
+          "start_local": "16:00",
+          "timezone": "Europe/London"
+        },
+        {
+          "configuration_id": "POST_30m",
+          "directional_hypothesis": "USD_DEPRECIATES",
+          "duration_minutes": 30,
+          "eligible_pairs": [
+            "AUD/USD.OANDA",
+            "EUR/USD.OANDA",
+            "GBP/USD.OANDA",
+            "NZD/USD.OANDA",
+            "USD/CAD.OANDA",
+            "USD/CHF.OANDA",
+            "USD/JPY.OANDA"
+          ],
+          "end_local": "16:30",
+          "pair_entry_sides": {
+            "AUD/USD.OANDA": "BUY",
+            "EUR/USD.OANDA": "BUY",
+            "GBP/USD.OANDA": "BUY",
+            "NZD/USD.OANDA": "BUY",
+            "USD/CAD.OANDA": "SELL",
+            "USD/CHF.OANDA": "SELL",
+            "USD/JPY.OANDA": "SELL"
+          },
+          "phase": "POST",
+          "start_local": "16:00",
+          "timezone": "Europe/London"
+        },
+        {
+          "configuration_id": "POST_60m",
+          "directional_hypothesis": "USD_DEPRECIATES",
+          "duration_minutes": 60,
+          "eligible_pairs": [
+            "AUD/USD.OANDA",
+            "EUR/USD.OANDA",
+            "GBP/USD.OANDA",
+            "NZD/USD.OANDA",
+            "USD/CAD.OANDA",
+            "USD/CHF.OANDA",
+            "USD/JPY.OANDA"
+          ],
+          "end_local": "17:00",
+          "pair_entry_sides": {
+            "AUD/USD.OANDA": "BUY",
+            "EUR/USD.OANDA": "BUY",
+            "GBP/USD.OANDA": "BUY",
+            "NZD/USD.OANDA": "BUY",
+            "USD/CAD.OANDA": "SELL",
+            "USD/CHF.OANDA": "SELL",
+            "USD/JPY.OANDA": "SELL"
+          },
+          "phase": "POST",
+          "start_local": "16:00",
+          "timezone": "Europe/London"
+        }
+      ],
+      "fix_local": "16:00",
+      "fix_timezone": "Europe/London",
+      "institutional_anchor": "WM/R London fix"
+    },
+    "B4F1C_tokyo_fix_flow_reversal": {
+      "clock_resolution": "authoritative and academic sources agree on the 09:55 market-rate/fix anchor; a later publication time is not the signal clock",
+      "configurations": [
+        {
+          "configuration_id": "PRE_15m",
+          "directional_hypothesis": "USD_APPRECIATES",
+          "duration_minutes": 15,
+          "eligible_pairs": [
+            "AUD/USD.OANDA",
+            "EUR/USD.OANDA",
+            "GBP/USD.OANDA",
+            "NZD/USD.OANDA",
+            "USD/CAD.OANDA",
+            "USD/CHF.OANDA",
+            "USD/JPY.OANDA"
+          ],
+          "end_local": "09:55",
+          "pair_entry_sides": {
+            "AUD/USD.OANDA": "SELL",
+            "EUR/USD.OANDA": "SELL",
+            "GBP/USD.OANDA": "SELL",
+            "NZD/USD.OANDA": "SELL",
+            "USD/CAD.OANDA": "BUY",
+            "USD/CHF.OANDA": "BUY",
+            "USD/JPY.OANDA": "BUY"
+          },
+          "phase": "PRE",
+          "start_local": "09:40",
+          "timezone": "Asia/Tokyo"
+        },
+        {
+          "configuration_id": "PRE_30m",
+          "directional_hypothesis": "USD_APPRECIATES",
+          "duration_minutes": 30,
+          "eligible_pairs": [
+            "AUD/USD.OANDA",
+            "EUR/USD.OANDA",
+            "GBP/USD.OANDA",
+            "NZD/USD.OANDA",
+            "USD/CAD.OANDA",
+            "USD/CHF.OANDA",
+            "USD/JPY.OANDA"
+          ],
+          "end_local": "09:55",
+          "pair_entry_sides": {
+            "AUD/USD.OANDA": "SELL",
+            "EUR/USD.OANDA": "SELL",
+            "GBP/USD.OANDA": "SELL",
+            "NZD/USD.OANDA": "SELL",
+            "USD/CAD.OANDA": "BUY",
+            "USD/CHF.OANDA": "BUY",
+            "USD/JPY.OANDA": "BUY"
+          },
+          "phase": "PRE",
+          "start_local": "09:25",
+          "timezone": "Asia/Tokyo"
+        },
+        {
+          "configuration_id": "PRE_60m",
+          "directional_hypothesis": "USD_APPRECIATES",
+          "duration_minutes": 60,
+          "eligible_pairs": [
+            "AUD/USD.OANDA",
+            "EUR/USD.OANDA",
+            "GBP/USD.OANDA",
+            "NZD/USD.OANDA",
+            "USD/CAD.OANDA",
+            "USD/CHF.OANDA",
+            "USD/JPY.OANDA"
+          ],
+          "end_local": "09:55",
+          "pair_entry_sides": {
+            "AUD/USD.OANDA": "SELL",
+            "EUR/USD.OANDA": "SELL",
+            "GBP/USD.OANDA": "SELL",
+            "NZD/USD.OANDA": "SELL",
+            "USD/CAD.OANDA": "BUY",
+            "USD/CHF.OANDA": "BUY",
+            "USD/JPY.OANDA": "BUY"
+          },
+          "phase": "PRE",
+          "start_local": "08:55",
+          "timezone": "Asia/Tokyo"
+        },
+        {
+          "configuration_id": "POST_15m",
+          "directional_hypothesis": "USD_DEPRECIATES",
+          "duration_minutes": 15,
+          "eligible_pairs": [
+            "AUD/USD.OANDA",
+            "EUR/USD.OANDA",
+            "GBP/USD.OANDA",
+            "NZD/USD.OANDA",
+            "USD/CAD.OANDA",
+            "USD/CHF.OANDA",
+            "USD/JPY.OANDA"
+          ],
+          "end_local": "10:10",
+          "pair_entry_sides": {
+            "AUD/USD.OANDA": "BUY",
+            "EUR/USD.OANDA": "BUY",
+            "GBP/USD.OANDA": "BUY",
+            "NZD/USD.OANDA": "BUY",
+            "USD/CAD.OANDA": "SELL",
+            "USD/CHF.OANDA": "SELL",
+            "USD/JPY.OANDA": "SELL"
+          },
+          "phase": "POST",
+          "start_local": "09:55",
+          "timezone": "Asia/Tokyo"
+        },
+        {
+          "configuration_id": "POST_30m",
+          "directional_hypothesis": "USD_DEPRECIATES",
+          "duration_minutes": 30,
+          "eligible_pairs": [
+            "AUD/USD.OANDA",
+            "EUR/USD.OANDA",
+            "GBP/USD.OANDA",
+            "NZD/USD.OANDA",
+            "USD/CAD.OANDA",
+            "USD/CHF.OANDA",
+            "USD/JPY.OANDA"
+          ],
+          "end_local": "10:25",
+          "pair_entry_sides": {
+            "AUD/USD.OANDA": "BUY",
+            "EUR/USD.OANDA": "BUY",
+            "GBP/USD.OANDA": "BUY",
+            "NZD/USD.OANDA": "BUY",
+            "USD/CAD.OANDA": "SELL",
+            "USD/CHF.OANDA": "SELL",
+            "USD/JPY.OANDA": "SELL"
+          },
+          "phase": "POST",
+          "start_local": "09:55",
+          "timezone": "Asia/Tokyo"
+        },
+        {
+          "configuration_id": "POST_60m",
+          "directional_hypothesis": "USD_DEPRECIATES",
+          "duration_minutes": 60,
+          "eligible_pairs": [
+            "AUD/USD.OANDA",
+            "EUR/USD.OANDA",
+            "GBP/USD.OANDA",
+            "NZD/USD.OANDA",
+            "USD/CAD.OANDA",
+            "USD/CHF.OANDA",
+            "USD/JPY.OANDA"
+          ],
+          "end_local": "10:55",
+          "pair_entry_sides": {
+            "AUD/USD.OANDA": "BUY",
+            "EUR/USD.OANDA": "BUY",
+            "GBP/USD.OANDA": "BUY",
+            "NZD/USD.OANDA": "BUY",
+            "USD/CAD.OANDA": "SELL",
+            "USD/CHF.OANDA": "SELL",
+            "USD/JPY.OANDA": "SELL"
+          },
+          "phase": "POST",
+          "start_local": "09:55",
+          "timezone": "Asia/Tokyo"
+        }
+      ],
+      "fix_local": "09:55",
+      "fix_timezone": "Asia/Tokyo",
+      "institutional_anchor": "Tokyo fixing convention",
+      "material_definition_conflict_found": false
+    }
+  },
+  "family_breadth_gate": {
+    "breadth_metrics_all_required": {
+      "native_expectancy_usd_per_trade_gt": 0,
+      "native_profit_factor_gt": 1.0,
+      "stress_1_5x_expectancy_usd_per_trade_gt": 0
+    },
+    "eligible_subset_frozen": [
+      "AUD/USD.OANDA",
+      "EUR/USD.OANDA",
+      "GBP/USD.OANDA",
+      "NZD/USD.OANDA",
+      "USD/CAD.OANDA",
+      "USD/CHF.OANDA",
+      "USD/JPY.OANDA"
+    ],
+    "evaluation_unit": "B4F1A across its seven frozen local sleeves; B4F1B/B4F1C separately for each frozen phase-duration configuration across seven eligible pairs",
+    "sleeves_meeting_breadth_metrics_gte": 3,
+    "sleeves_passing_full_hard_gate_set_gte": 2
+  },
+  "family_scope": {
+    "deferred_not_implemented": [
+      "B4F2_cross_currency_lead_lag_propagation"
+    ],
+    "no_extra_families": true,
+    "primary_exact": [
+      "B4F1A_local_hours_flow_seasonality",
+      "B4F1B_london_fix_flow_reversal",
+      "B4F1C_tokyo_fix_flow_reversal"
+    ]
+  },
+  "ftmo_stage": "prohibited until DEVELOPMENT, one-shot VALIDATION, and execution promotion pass",
+  "grid_accounting": {
+    "local_hours_sleeve_window_cells": 7,
+    "london_executable_pair_cells": 42,
+    "london_fix_timing_direction_cells_before_pairs": 6,
+    "tokyo_executable_pair_cells": 42,
+    "tokyo_fix_timing_direction_cells_before_pairs": 6,
+    "total_executable_sleeve_configuration_hypotheses": 91,
+    "total_primary_cells_before_fix_pair_multiplication": 19,
+    "unique_primary_families": 3
+  },
+  "lifecycle": {
+    "development_accessed": false,
+    "execution_implemented": false,
+    "holdout_accessed": false,
+    "signals_implemented": false,
+    "validation_accessed": false
+  },
+  "multiple_testing_and_no_rescue": {
+    "failed_family_action": "retire under frozen definition",
+    "future_modification": "new explicitly labelled exploratory programme",
+    "no_additional_windows": true,
+    "no_nearby_time_rescue": true,
+    "no_pair_cherry_picking": true,
+    "no_sign_inversion": true,
+    "no_volatility_regime_rescue": true,
+    "no_weekday_rescue": true
+  },
+  "preregistration_semantic_sha256": "4a019140ab798cdccc14ba3c6a0817dfca10e4d626de58b95d1c5c0d7c01dd98",
+  "preregistration_version": "batch4-structural-intraday-flow-preregistration-v1",
+  "purpose": "freeze Batch 4 methodology before any new DEVELOPMENT performance access",
+  "reuse_audit": {
+    "retired_session_strategies_audited": [
+      "session_range_expansion_v1",
+      "eurusd_session_range_expansion_v1",
+      "session_continuation_signals",
+      "B3F2_asian_range_fade",
+      "B3F3_session_open_microstructure_mean_reversion"
+    ],
+    "reuse": [
+      "native paired-M1 execution conventions from Batch 3",
+      "ZoneInfo-based session handling",
+      "cost_stress.widen_bid_ask_frame",
+      "account-currency conversion and Alpha Lab gate/report infrastructure at implementation",
+      "Batch-3 v2 folds, concentration, winner-removal and connected-component semantics",
+      "write-once semantic-hash artifact convention"
+    ],
+    "structural_distinction": "Batch 4 is triggered only by a preregistered civil clock or institutional fix; it has no range, ATR, breakout, reversal-pattern, anchor, or z-score trigger"
+  },
+  "source_provenance": [
+    {
+      "authors": [
+        "Francis Breedon",
+        "Angelo Ranaldo"
+      ],
+      "directional_claim_used": "a currency tends to depreciate during its own local trading hours",
+      "supports": "B4F1A",
+      "timing_claim_used": "economically defined local trading hours; the paper reports the effect is not materially sensitive to precise session endpoints",
+      "title": "Intraday Patterns in FX Returns and Order Flow",
+      "type": "academic_peer_reviewed",
+      "url": "https://doi.org/10.1111/jmcb.12032",
+      "year": 2013
+    },
+    {
+      "authors": [
+        "Ingomar Krohn",
+        "Philippe Mueller",
+        "Paul Whelan"
+      ],
+      "directional_claim_used": "USD appreciates before the London and Tokyo fixes and depreciates afterward",
+      "supports": "B4F1B and B4F1C",
+      "timing_claim_used": "London 16:00 local; Tokyo 09:55 local",
+      "title": "Foreign Exchange Fixings and Returns around the Clock",
+      "type": "academic_peer_reviewed",
+      "url": "https://doi.org/10.1111/jofi.13306",
+      "year": 2024
+    },
+    {
+      "authors": [
+        "FTSE Russell / LSEG"
+      ],
+      "directional_claim_used": "none; benchmark-clock corroboration only",
+      "supports": "B4F1B anchor",
+      "timing_claim_used": "WM/R closing spot rates fixed at 16:00 London",
+      "title": "WM/Reuters FX benchmarks",
+      "type": "institutional_benchmark_documentation",
+      "url": "https://www.lseg.com/en/ftse-russell/benchmarks/wmr-fx-benchmarks",
+      "year": 2026
+    },
+    {
+      "authors": [
+        "Takatoshi Ito",
+        "Masahiro Yamada"
+      ],
+      "directional_claim_used": "none; clock corroboration only",
+      "supports": "B4F1B and B4F1C benchmark-clock corroboration",
+      "timing_claim_used": "Tokyo 09:55 local and London 16:00 local",
+      "title": "Was the Forex Fixing Fixed?",
+      "type": "academic_NBER",
+      "url": "https://doi.org/10.3386/w21518",
+      "year": 2015
+    },
+    {
+      "authors": [
+        "Sumitomo Mitsui Banking Corporation"
+      ],
+      "directional_claim_used": "none; benchmark-clock corroboration only",
+      "supports": "B4F1C anchor",
+      "timing_claim_used": "TTM is based on the actual market rate around 09:55 Tokyo",
+      "title": "Foreign Exchange Rates",
+      "type": "institutional_bank_documentation",
+      "url": "https://www.smbc.co.jp/global/terms_fx/index_e.html",
+      "year": 2026
+    }
+  ],
+  "stage": "B4.0",
+  "universe": [
+    "AUD/USD.OANDA",
+    "EUR/USD.OANDA",
+    "GBP/USD.OANDA",
+    "NZD/USD.OANDA",
+    "USD/CAD.OANDA",
+    "USD/CHF.OANDA",
+    "USD/JPY.OANDA"
+  ]
+}

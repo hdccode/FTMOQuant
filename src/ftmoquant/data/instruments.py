@@ -313,6 +313,30 @@ NZDUSD_OANDA_SPEC = InstrumentSpec(
     session_policy_id="dukascopy-fx-ny-close-v1",
 )
 
+AUDCAD_OANDA_SPEC = InstrumentSpec(
+    dataset_symbol="AUDCAD",
+    instrument_id="AUD/CAD.OANDA",
+    base_currency="AUD",
+    quote_currency="CAD",
+    price_precision=5,
+    price_increment="0.00001",
+    size_precision=8,
+    size_increment="0.00000001",
+    session_policy_id="dukascopy-fx-ny-close-v1",
+)
+
+EURJPY_OANDA_SPEC = InstrumentSpec(
+    dataset_symbol="EURJPY",
+    instrument_id="EUR/JPY.OANDA",
+    base_currency="EUR",
+    quote_currency="JPY",
+    price_precision=3,
+    price_increment="0.001",
+    size_precision=8,
+    size_increment="0.00000001",
+    session_policy_id="dukascopy-fx-ny-close-v1",
+)
+
 OANDA_ALPHA_LAB_SPECS = (
     EURUSD_OANDA_SPEC,
     GBPUSD_OANDA_SPEC,
@@ -322,6 +346,10 @@ OANDA_ALPHA_LAB_SPECS = (
     USDCAD_OANDA_SPEC,
     NZDUSD_OANDA_SPEC,
 )
+
+# Additive Batch-5-only native crosses.  Keeping this tuple separate preserves
+# the exact seven-instrument identity enforced by oanda_fx_alpha_lab_v1.
+OANDA_BATCH5_CROSS_SPECS = (AUDCAD_OANDA_SPEC, EURJPY_OANDA_SPEC)
 
 
 def to_nautilus_bars(

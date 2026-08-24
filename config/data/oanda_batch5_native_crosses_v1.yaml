@@ -1,0 +1,33 @@
+# Batch-5 data infrastructure only: exactly two native OANDA crosses.  The
+# acquisition warm-up is 42 calendar days, safely exceeding the frozen 30
+# completed-FX-day maximum lookback without admitting VALIDATION or holdout.
+lineage_id: oanda_batch5_native_crosses_v1
+version: 1
+provider:
+  name: OANDA_v20_practice
+  environment: practice
+  api_version: v3
+acquisition:
+  start_utc: "2019-01-28T00:00:00Z"
+  development_start_utc: "2019-03-11T00:00:00Z"
+  development_end_exclusive_utc: "2023-04-11T00:00:00Z"
+granularity: M1
+price_components: BA
+native_only: true
+synthetic_crosses_permitted: false
+fills_or_interpolation: false
+instruments:
+  - dataset_symbol: AUDCAD
+    instrument_id: AUD/CAD.OANDA
+    oanda_instrument: AUD_CAD
+    expected_display_precision: 5
+    usd_conversion_instrument: USD/CAD.OANDA
+  - dataset_symbol: EURJPY
+    instrument_id: EUR/JPY.OANDA
+    oanda_instrument: EUR_JPY
+    expected_display_precision: 3
+    usd_conversion_instrument: USD/JPY.OANDA
+firewall:
+  validation_accessed: false
+  holdout_accessed: false
+  performance_fields_permitted: false

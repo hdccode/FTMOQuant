@@ -1,0 +1,67 @@
+{
+  "amendment_semantic_sha256": "57c406f9c3c84ab983b3fb0ba3cca7e5e7b0ee9d39c274fa7c58f93bc766a613",
+  "amendment_version": "batch5-cftc-causal-availability-amendment-v1",
+  "audit_window": {
+    "end_inclusive_report_date": "2023-04-11",
+    "expected_week_count": 214,
+    "start_inclusive": "2019-03-11"
+  },
+  "created_at_utc": "2026-08-24T00:00:00Z",
+  "data_firewall": {
+    "development_fx_prices_or_returns_inspected": false,
+    "signals_backtests_or_performance_run": false,
+    "validation_or_holdout_accessed": false
+  },
+  "exception_calendar": [
+    {"availability_status":"UNRESOLVED","availability_timestamp":null,"evidence":"holiday-affected warm-up week; historical release timestamp not present in CFTC historical special announcements","exception":"Independence Day holiday handling","report_date":"2018-07-03"},
+    {"availability_status":"UNRESOLVED","availability_timestamp":null,"evidence":"holiday-affected warm-up week; historical release timestamp not present in CFTC historical special announcements","exception":"Thanksgiving holiday handling","report_date":"2018-11-20"},
+    {"availability_status":"VERIFIED_OFFICIAL","availability_timestamp":"2019-02-01T15:30:00-05:00","evidence":"CFTC Release 7864-19 shutdown catch-up schedule","exception":"appropriations lapse catch-up; Monday as-of date","report_date":"2018-12-24"},
+    {"availability_status":"VERIFIED_OFFICIAL","availability_timestamp":"2019-02-05T15:30:00-05:00","evidence":"CFTC Release 7864-19 chronological Tuesday/Friday catch-up schedule","exception":"appropriations lapse catch-up; Monday as-of date","report_date":"2018-12-31"},
+    {"availability_status":"VERIFIED_OFFICIAL","availability_timestamp":"2019-02-08T15:30:00-05:00","evidence":"CFTC Release 7864-19 chronological Tuesday/Friday catch-up schedule","exception":"appropriations lapse catch-up","report_date":"2019-01-08"},
+    {"availability_status":"VERIFIED_OFFICIAL","availability_timestamp":"2019-02-12T15:30:00-05:00","evidence":"CFTC Release 7864-19 chronological Tuesday/Friday catch-up schedule","exception":"appropriations lapse catch-up","report_date":"2019-01-15"},
+    {"availability_status":"VERIFIED_OFFICIAL","availability_timestamp":"2019-02-15T15:30:00-05:00","evidence":"CFTC Release 7864-19 chronological Tuesday/Friday catch-up schedule","exception":"appropriations lapse catch-up","report_date":"2019-01-22"},
+    {"availability_status":"VERIFIED_OFFICIAL","availability_timestamp":"2019-02-19T15:30:00-05:00","evidence":"CFTC Release 7864-19 chronological Tuesday/Friday catch-up schedule","exception":"appropriations lapse catch-up","report_date":"2019-01-29"},
+    {"availability_status":"VERIFIED_OFFICIAL","availability_timestamp":"2019-02-22T15:30:00-05:00","evidence":"CFTC Release 7864-19 chronological Tuesday/Friday catch-up schedule","exception":"appropriations lapse catch-up","report_date":"2019-02-05"},
+    {"availability_status":"VERIFIED_OFFICIAL","availability_timestamp":"2019-02-26T15:30:00-05:00","evidence":"CFTC Release 7864-19 chronological Tuesday/Friday catch-up schedule","exception":"appropriations lapse catch-up","report_date":"2019-02-12"},
+    {"availability_status":"VERIFIED_OFFICIAL","availability_timestamp":"2019-03-01T15:30:00-05:00","evidence":"CFTC Release 7864-19 chronological Tuesday/Friday catch-up schedule","exception":"appropriations lapse catch-up","report_date":"2019-02-19"},
+    {"availability_status":"VERIFIED_OFFICIAL","availability_timestamp":"2019-03-05T15:30:00-05:00","evidence":"CFTC Release 7864-19 chronological Tuesday/Friday catch-up schedule","exception":"appropriations lapse catch-up","report_date":"2019-02-26"},
+    {"availability_status":"VERIFIED_OFFICIAL","availability_timestamp":"2019-03-08T15:30:00-05:00","evidence":"CFTC Release 7864-19 chronological Tuesday/Friday catch-up schedule","exception":"appropriations lapse catch-up; final pre-DEVELOPMENT report","report_date":"2019-03-05"},
+    {"availability_status":"UNRESOLVED","availability_timestamp":null,"evidence":"holiday-affected week; historical release timestamp not present in CFTC historical special announcements","exception":"Independence Day holiday handling","report_date":"2019-07-02"},
+    {"availability_status":"UNRESOLVED","availability_timestamp":null,"evidence":"holiday-affected week; historical release timestamp not present in CFTC historical special announcements","exception":"Thanksgiving holiday handling","report_date":"2019-11-26"},
+    {"availability_status":"UNRESOLVED","availability_timestamp":null,"evidence":"holiday-affected week; historical release timestamp not present in CFTC historical special announcements","exception":"Christmas holiday handling","report_date":"2019-12-24"},
+    {"availability_status":"UNRESOLVED","availability_timestamp":null,"evidence":"holiday-affected week; historical release timestamp not present in CFTC historical special announcements","exception":"New Year holiday handling","report_date":"2019-12-31"},
+    {"availability_status":"UNRESOLVED","availability_timestamp":null,"evidence":"holiday-affected week; historical release timestamp not present in CFTC historical special announcements","exception":"Independence Day observed holiday handling","report_date":"2020-06-30"},
+    {"availability_status":"UNRESOLVED","availability_timestamp":null,"evidence":"holiday-affected week; historical release timestamp not present in CFTC historical special announcements","exception":"Thanksgiving holiday handling","report_date":"2020-11-24"},
+    {"availability_status":"VERIFIED_OFFICIAL","availability_timestamp":"2020-12-28T15:30:00-05:00","evidence":"CFTC historical special announcement dated 2020-12-28","exception":"additional federal holiday on December 24; Monday report date and Monday publication","report_date":"2020-12-21"},
+    {"availability_status":"UNRESOLVED","availability_timestamp":null,"evidence":"holiday-affected week; historical release timestamp not present in CFTC historical special announcements","exception":"New Year holiday handling","report_date":"2020-12-29"},
+    {"availability_status":"VERIFIED_OFFICIAL","availability_timestamp":"2021-06-21T15:30:00-04:00","evidence":"CFTC historical special announcement dated 2021-06-17","exception":"Juneteenth federal holiday observance; delayed to Monday","report_date":"2021-06-15"},
+    {"availability_status":"UNRESOLVED","availability_timestamp":null,"evidence":"holiday-affected week; historical release timestamp not present in CFTC historical special announcements","exception":"Thanksgiving holiday handling","report_date":"2021-11-23"},
+    {"availability_status":"UNRESOLVED","availability_timestamp":null,"evidence":"holiday-affected week; historical release timestamp not present in CFTC historical special announcements","exception":"Christmas observed holiday handling","report_date":"2021-12-21"},
+    {"availability_status":"UNRESOLVED","availability_timestamp":null,"evidence":"holiday-affected week; historical release timestamp not present in CFTC historical special announcements","exception":"New Year observed holiday handling","report_date":"2021-12-28"},
+    {"availability_status":"UNRESOLVED","availability_timestamp":null,"evidence":"holiday-affected week; historical release timestamp not present in CFTC historical special announcements","exception":"Veterans Day holiday handling","report_date":"2022-11-08"},
+    {"availability_status":"UNRESOLVED","availability_timestamp":null,"evidence":"holiday-affected week; historical release timestamp not present in CFTC historical special announcements","exception":"Thanksgiving holiday handling","report_date":"2022-11-22"},
+    {"availability_status":"VERIFIED_OFFICIAL","availability_timestamp":"2023-02-24T15:30:00-05:00","evidence":"CFTC ION historical special announcement/catch-up record","exception":"ION cyber incident; originally scheduled 2023-02-03","report_date":"2023-01-31"},
+    {"availability_status":"VERIFIED_OFFICIAL","availability_timestamp":"2023-03-03T15:30:00-05:00","evidence":"CFTC ION historical special announcement/catch-up record","exception":"ION cyber incident; originally scheduled 2023-02-10","report_date":"2023-02-07"},
+    {"availability_status":"VERIFIED_OFFICIAL","availability_timestamp":"2023-03-08T15:30:00-05:00","evidence":"CFTC ION historical special announcement/catch-up record","exception":"ION cyber incident; originally scheduled 2023-02-17","report_date":"2023-02-14"},
+    {"availability_status":"VERIFIED_OFFICIAL","availability_timestamp":"2023-03-10T15:30:00-05:00","evidence":"CFTC ION historical special announcement/catch-up record","exception":"ION cyber incident; originally scheduled 2023-02-24","report_date":"2023-02-21"},
+    {"availability_status":"VERIFIED_OFFICIAL","availability_timestamp":"2023-03-14T15:30:00-04:00","evidence":"CFTC ION historical special announcement/catch-up record","exception":"ION cyber incident; originally scheduled 2023-03-03","report_date":"2023-02-28"},
+    {"availability_status":"VERIFIED_OFFICIAL","availability_timestamp":"2023-03-16T15:30:00-04:00","evidence":"CFTC ION historical special announcement/catch-up record","exception":"ION cyber incident; originally scheduled 2023-03-10","report_date":"2023-03-07"},
+    {"availability_status":"VERIFIED_OFFICIAL","availability_timestamp":"2023-03-21T15:30:00-04:00","evidence":"CFTC ION historical special announcement/catch-up record","exception":"ION cyber incident; originally scheduled 2023-03-17","report_date":"2023-03-14"}
+  ],
+  "official_evidence": [
+    {"claim":"COT is generally published Friday at 15:30 Eastern using preceding Tuesday data; holidays can change the schedule; no complete historical release-date list exists","url":"https://www.cftc.gov/MarketReports/CommitmentsofTraders/index.htm"},
+    {"claim":"dated shutdown, holiday, correction, suspension, and ION catch-up announcements","url":"https://www.cftc.gov/MarketReports/CommitmentsofTraders/HistoricalSpecialAnnouncements/index.htm"},
+    {"claim":"2018-2019 appropriations-lapse catch-up schedule, chronological Tuesday/Friday publications through the pre-DEVELOPMENT boundary","url":"https://www.cftc.gov/PressRoom/PressReleases/7864-19"},
+    {"claim":"annual TFF Futures Only bulk files and variable definitions","url":"https://www.cftc.gov/MarketReports/CommitmentsofTraders/HistoricalCompressed/index.htm"}
+  ],
+  "original_preregistration_semantic_sha256": "603c3a80427129b5c3758460c8cce5bc21947546520a3ef38a6e1c42e53fcbdf",
+  "policy": {
+    "availability_priority": ["VERIFIED_OFFICIAL","STANDARD_OFFICIAL_SCHEDULE","UNRESOLVED"],
+    "month_end_rule":"At formation timestamp T, only observations whose non-null availability_timestamp is <= T are visible; use the newest earlier visible observation when a newer report is not yet available.",
+    "ordinary_week_schedule":{"day":"Friday","time":"15:30:00","timezone":"America/New_York"},
+    "prohibited_fallbacks":["report_date_as_availability","arbitrary_lag","current_download_timestamp","archive_first_capture_as_actual_release","interpolated_release_date"],
+    "unresolved_rule":"availability_timestamp is null and the observation is unavailable to every causal formation"
+  },
+  "rationale":"CFTC annual historical files contain report dates but no complete historical publication-timestamp list. This amendment freezes a regulator-documented standard schedule and fail-closed exceptional-week treatment before B5A source data is processed.",
+  "status_counts":{"STANDARD_OFFICIAL_SCHEDULE":193,"UNRESOLVED":12,"VERIFIED_OFFICIAL":9}
+}

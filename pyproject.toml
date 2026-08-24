@@ -35,6 +35,12 @@ ftmoquant-correct-instrument = "ftmoquant.data.g1_4_cli:correct_main"
 ftmoquant-materialize-instrument-splits = "ftmoquant.data.g1_4_cli:split_main"
 ftmoquant-freeze-instrument-readiness = "ftmoquant.data.g1_4_cli:freeze_instrument_main"
 ftmoquant-freeze-universe-readiness = "ftmoquant.data.g1_4_cli:freeze_universe_main"
+ftmoquant-b3f1-development-screen = "ftmoquant.research.alpha_lab.b3f1_development_orchestrator:main"
+ftmoquant-b3f2-development-screen = "ftmoquant.research.alpha_lab.b3f2_development_orchestrator:main"
+ftmoquant-b3f3-development-screen = "ftmoquant.research.alpha_lab.b3f3_development_orchestrator:main"
+ftmoquant-batch4-development-screen = "ftmoquant.research.alpha_lab.batch4_development_orchestrator:main"
+ftmoquant-batch5-development-screen = "ftmoquant.research.alpha_lab.batch5_development_orchestrator:main"
+ftmoquant-batch5-bc-corrected-development = "ftmoquant.research.alpha_lab.batch5_bc_corrected_development_orchestrator:main"
 ftmoquant-import-macro-events = "ftmoquant.data.macro_events:main"
 ftmoquant-evaluate-ts-momentum-development = "ftmoquant.research.ts_momentum_development:main"
 ftmoquant-evaluate-session-range-expansion-development = "ftmoquant.research.session_range_expansion_development:main"
@@ -69,6 +75,9 @@ ftmoquant-ftmo-mc-sizing-screen-refinement = "ftmoquant.research.ftmo_pass_proba
 ftmoquant-ftmo-mc-precision-run = "ftmoquant.research.ftmo_pass_probability.cli:precision_run_main"
 ftmoquant-ftmo-mc-validation-diagnostic = "ftmoquant.research.ftmo_pass_probability.cli:validation_diagnostic_main"
 ftmoquant-ftmo-mc-alpha-diagnostic = "ftmoquant.research.ftmo_pass_probability.cli:alpha_diagnostic_main"
+ftmoquant-joint-frontier-refinement = "ftmoquant.research.ftmo_joint_frontier_refinement:main"
+ftmoquant-joint-frontier-precision = "ftmoquant.research.ftmo_joint_frontier_precision:main"
+ftmoquant-joint-frontier-validation = "ftmoquant.research.ftmo_joint_frontier_validation:main"
 
 [dependency-groups]
 dev = [

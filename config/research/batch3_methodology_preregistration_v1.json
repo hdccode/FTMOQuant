@@ -1,0 +1,325 @@
+{
+  "created_at_utc": "2026-08-19T16:41:33.588606Z",
+  "development_gates": {
+    "directional_robustness": {
+      "declared_applicability": "all three in-scope families (B3F1, B3F2, B3F3) are declared, before any DEVELOPMENT result is observed, to be structurally two-sided (each admits both long and short trades by construction: B3F1 trades the spread in both directions, B3F2 fades excursions on both sides of the Asian range, B3F3 fades excursions in both directions at session open); this gate therefore applies to all three without exception or post-hoc waiver",
+      "rule": "each direction independently requires profit_factor >= 1.0"
+    },
+    "economic": {
+      "expectancy_usd_per_trade_gt": 0,
+      "profit_factor_gt": 1.15
+    },
+    "evaluation_precedence": "gates are evaluated in the fixed order listed below per sleeve (one instrument x one family x one frozen parameter configuration); the opportunity_density gate is evaluated FIRST and short-circuits all subsequent gates on failure, so that rolling-stability, concentration, tail, and best-N-trade gates are never evaluated against an underpowered or zero-eligible-window sample",
+    "exceptional_winner_dependency": {
+      "remaining_expectancy_usd_per_trade_gt": 0,
+      "remaining_profit_factor_gt": 1.05,
+      "rule": "rank ALL completed trades in the sleeve by realized P&L descending; remove the top N = ceil(0.05 * completed_trade_count) trades (ceiling rounding, so at least one trade is always removed and the removed set is never under-sized); ties at the boundary between the Nth and (N+1)th-ranked trade by P&L are broken by removing the earlier-exit-timestamp trade first, so the removed set is always exactly N trades and fully deterministic"
+    },
+    "opportunity_density": {
+      "rationale": "statistical power for the gates below, and a floor on how quickly the strategy can plausibly accumulate a challenge profit target",
+      "rule": "completed_trade_count >= 80",
+      "scope": "per sleeve, over the full frozen DEVELOPMENT interval"
+    },
+    "parameter_neighborhood_robustness": {
+      "amendment_rule": "if a family's B3.1/B3.2 parameter grid is genuinely higher-dimensional such that a larger minimum region is warranted (as B2F1's 3-D grid required a minimum of 3), that family's minimum region size must be fixed at grid-definition time in B3.1 and recorded as an explicit amendment to this preregistration BEFORE that family's DEVELOPMENT results are observed -- never chosen after seeing results. The default of 2 applies to every family unless so amended",
+      "default_min_connected_region_size": 2,
+      "mechanism": "reuse, unchanged, the existing N-D axis-adjacency + connected-component check (ftmoquant.research.alpha_lab.screening_stage2._connected_components / ftmoquant.research.alpha_lab.liquidity_structure_screen._axis_adjacent_neighbors)"
+    },
+    "profit_concentration": {
+      "attribution_timestamp": "trade exit timestamp (UTC)",
+      "denominator": "sum of realized P&L over trades with strictly positive realized P&L only, per sleeve, over the full DEVELOPMENT interval ('total positive DEVELOPMENT profit')",
+      "max_single_month_share": 0.15,
+      "max_single_quarter_share": 0.3,
+      "period_boundaries": "calendar month / calendar quarter in UTC",
+      "zero_or_negative_denominator": "if total positive DEVELOPMENT profit <= 0 for a sleeve, this gate fails immediately -- mirrors the existing E_catastrophic_concentration_guard convention in config/validation/oanda_alpha_lab_stage2_survivors_v1_preregistration.json"
+    },
+    "rolling_stability": {
+      "applies_independently_per_window_size": true,
+      "fraction_of_eligible_windows_positive_gte": 0.7,
+      "median_eligible_window_expectancy_gt": 0,
+      "undefined_case": "if a sleeve has zero eligible windows for a given window size (completed_trade_count < window size), that sleeve has already failed the opportunity_density gate above (80 > 50 > 30) and this gate is never reached for it",
+      "window_sizes": [
+        30,
+        50
+      ],
+      "windowing_convention": "trailing, non-overlapping-history-required windows over trades ordered by exit timestamp, identical to ftmoquant.research.ftmo_pass_probability.alpha_diagnostic._rolling_expectancy: window w's first eligible value ends at the w-th trade (index w-1); windows requiring fewer than w completed trades do not exist and are never padded, zero-filled, or otherwise fabricated -- they are excluded from every statistic below"
+    },
+    "tail_and_concentration": {
+      "largest_single_winning_trade_share_of_total_positive_profit_lte": 0.2,
+      "reported_not_gated": [
+        "pnl_skewness",
+        "pnl_kurtosis"
+      ]
+    },
+    "temporal_stability": {
+      "fold_boundaries_utc": [
+        "2019-03-11T00:00:00Z",
+        "2020-03-18T00:00:00Z",
+        "2021-03-26T00:00:00Z",
+        "2022-04-03T00:00:00Z",
+        "2023-04-11T00:00:00Z"
+      ],
+      "fold_count": 4,
+      "fold_derivation": "four equal 373-day chronological folds spanning [DEVELOPMENT_START, DEVELOPMENT_END_EXCLUSIVE) by pure calendar-day division (1492 / 4), derived without inspecting any return, price, or trade data",
+      "rule": "positive net return in at least 3 of the 4 folds"
+    },
+    "transaction_cost_sensitivity": {
+      "implementation_status": "does not exist in the repository yet; must be built as generic, shared, tested infrastructure in B3.1 BEFORE any Batch 3 DEVELOPMENT screening -- it is explicitly forbidden to invent an ad hoc, per-family, unverified stress mechanism at screening time",
+      "primary_execution": "native M1 BID/ASK trade-lifecycle execution from the outset for all three families (the existing wick_fvg_squeeze_execution.simulate_trades-style engine: buy crosses ASK, sell crosses BID, long-liquidation crosses BID, short-liquidation crosses ASK, stop-first same-bar collision, entry at the first strictly-later paired M1 observation, no interpolation) -- NOT the coarser scalar-fee vectorbt approximation used for Batch 1/2's Stage-1 screen",
+      "required_stress_mechanism": "widen every bar's spread by a fixed multiplier around its own mid price (ask' = mid + (ask - mid) * multiplier, bid' = mid - (mid - bid) * multiplier), then re-run the identical, unmodified signal and execution logic against the widened series; compare resulting expectancy/profit_factor to the un-stressed run",
+      "rule_1_5x": "expectancy_usd_per_trade > 0 at a 1.5x spread multiplier (all three families)",
+      "rule_2_0x": "expectancy_usd_per_trade > 0 at a 2.0x spread multiplier (B3F2 and B3F3 only, given their higher trade frequency and smaller per-trade targets make cost more material relative to target size)",
+      "why_a_new_stress_mechanism_is_required": "the existing pair-specific VALIDATION gate already established (see STRESS_GATE_REASON in ftmoquant.research.alpha_lab.pair_specific_validation) that native-spread execution has no separate cost parameter to scale by a multiplier post hoc -- spread cost is embedded intrinsically in which side of the book each entry/exit crosses. A cost-stress gate for Batch 3 therefore requires an explicit synthetic spread-widening transform applied to the raw BID/ASK price series BEFORE execution, not a scalar applied to an already-computed return"
+    }
+  },
+  "development_lineage": {
+    "alpha_lab_config_sha256": "97049732e4342db61a74ea0f433a816325d7e7c72f32aec1b7fa1fe5833504c3",
+    "development_end_exclusive_utc": "2023-04-11T00:00:00Z",
+    "development_start_utc": "2019-03-11T00:00:00Z",
+    "lineage_id": "oanda_fx_alpha_lab_v1"
+  },
+  "family_scope": {
+    "explicitly_out_of_scope": [
+      "cross_sectional_carry_momentum_basket"
+    ],
+    "in_scope": {
+      "B3F1_spread_mean_reversion": {
+        "causality_constraint": "the hedge ratio, spread mean, and spread standard deviation used to generate a signal at bar T must be estimated only from bars strictly before T (rolling, backward-looking, lagged by at least one completed bar); no contemporaneous or future price of either leg may enter formation of the hedge ratio or the spread statistic used to trigger that same bar's signal",
+        "execution_semantics": "native_bid_ask_from_outset",
+        "hypothesis": "market-neutral, relative-value mean reversion in the spread between two cointegrated/correlated USD-cross instruments (e.g. AUD/USD vs NZD/USD, or a triangulated cross constructed from two USD legs); economically distinct from every prior batch because it is the first family in this repository built as a hedged, diversified-by-construction position rather than a single-instrument directional bet",
+        "parameter_grid_status": "not yet defined; ranges/procedure to be frozen explicitly in B3.1 before any DEVELOPMENT screening of this family occurs",
+        "signal_concept": "z-score of a rolling hedge-ratio-adjusted spread relative to its own rolling mean/std; entry when |z| exceeds a threshold, exit on reversion toward zero or a stop on further widening",
+        "structurally_two_sided": true
+      },
+      "B3F2_asian_range_fade": {
+        "causality_constraint": "the Asian-session range used for a given trading day's fade signals must be built only from bars within that day's own, already-completed Asian session window; no bar from the same session still in progress, and no later session's bars, may contribute to that day's range",
+        "execution_semantics": "native_bid_ask_from_outset",
+        "hypothesis": "Asian-session range is typically low-volatility and range-bound; a London-open probe beyond that completed range is more often a liquidity-driven overshoot than the start of a sustained directional move -- the direct complementary hypothesis to the already-retired session-range-expansion/continuation families (which bet the breakout continues), not a cosmetic variant of them",
+        "parameter_grid_status": "not yet defined; ranges/procedure to be frozen explicitly in B3.1 before any DEVELOPMENT screening of this family occurs",
+        "signal_concept": "fade entries when price first closes back inside a causally completed Asian-session high/low range after probing beyond it; tight stop beyond the probe extreme, small fixed target back toward the range",
+        "structurally_two_sided": true
+      },
+      "B3F3_session_open_microstructure_mean_reversion": {
+        "causality_constraint": "the anchor (prior close / VWAP) used to size and trigger a given signal must be computable entirely from bars at or before that signal's own bar; VWAP accumulation may never include a bar later than the signal bar",
+        "execution_semantics": "native_bid_ask_from_outset",
+        "hypothesis": "short-horizon (M1/M5-style) overreaction at session opens, consistent with market makers temporarily absorbing an order-flow imbalance before price reverts toward a recent anchor; very high trade frequency is the deliberate mechanism for smoothing rolling expectancy and reducing dependence on any single trade or regime, distinct from the H1-timeframe, statistical z-score mean_reversion_h1_v1 candidate by both anchor (session-relative, not a rolling statistical z-score) and holding horizon",
+        "parameter_grid_status": "not yet defined; ranges/procedure to be frozen explicitly in B3.1 before any DEVELOPMENT screening of this family occurs",
+        "signal_concept": "fade an extreme excursion in the first few minutes after a session open back toward a causally available session anchor such as the prior session's close or a same-session VWAP computed only from bars up to and including the excursion bar",
+        "structurally_two_sided": true
+      }
+    },
+    "mid_pipeline_excluded_from_batch3": [
+      {
+        "batch": "batch1_wave1",
+        "status": "execution-promotion design frozen; real DEVELOPMENT orders run across all seven pairs, but the post-execution net return/Sharpe/cost-stress metric has not yet been computed -- recommended to close out in B3.1 rather than duplicate as a new Batch 3 family",
+        "strategy_id": "mean_reversion_h1_v1"
+      }
+    ],
+    "retired_from_prior_batches": [
+      {
+        "batch": "g1",
+        "disposition": "DEPLOYMENT_FEASIBILITY_BLOCKED",
+        "strategy_id": "carver_trend_carry_ftmo5_v1"
+      },
+      {
+        "batch": "g1",
+        "disposition": "VALIDATION_REJECTED",
+        "strategy_id": "eurusd_tsm_v1"
+      },
+      {
+        "batch": "g1",
+        "disposition": "development_failed",
+        "strategy_id": "liquidity_shock_reversion_v1"
+      },
+      {
+        "batch": "g1",
+        "disposition": "ALPHA_REJECTED",
+        "strategy_id": "eurusd_liquidity_shock_reversion_v1"
+      },
+      {
+        "batch": "g1",
+        "disposition": "development_failed",
+        "strategy_id": "session_range_expansion_v1"
+      },
+      {
+        "batch": "g1",
+        "disposition": "VALIDATION_REJECTED",
+        "strategy_id": "eurusd_session_range_expansion_v1"
+      },
+      {
+        "batch": "g1",
+        "disposition": "RETAINED_ONLY_AS_RESEARCH_REFERENCE",
+        "strategy_id": "trend_pullback_v1"
+      },
+      {
+        "batch": "g1",
+        "disposition": "ALPHA_REJECTED",
+        "strategy_id": "leo_gbpusd_v1"
+      },
+      {
+        "batch": "g1",
+        "disposition": "ALPHA_REJECTED",
+        "strategy_id": "ts_momentum_v1"
+      },
+      {
+        "batch": "g1",
+        "disposition": "DEVELOPMENT_BURNED_REJECT_RETIRE",
+        "strategy_id": "usd_macro_surprise_momentum_v1"
+      },
+      {
+        "batch": "g1",
+        "disposition": "VALIDATION_REJECTED",
+        "strategy_id": "eurusd_policy_rate_carry_proxy_v1"
+      },
+      {
+        "batch": "batch1_wave1",
+        "disposition": "BROAD_FX_VALIDATION_REJECTED",
+        "strategy_id": "momentum_signals_tsm"
+      },
+      {
+        "batch": "batch1_wave1",
+        "disposition": "BROAD_FX_VALIDATION_REJECTED",
+        "strategy_id": "donchian_breakout_signals"
+      },
+      {
+        "batch": "batch1_wave1",
+        "disposition": "DID_NOT_SURVIVE_STAGE2",
+        "strategy_id": "volatility_breakout_signals"
+      },
+      {
+        "batch": "batch1_wave1",
+        "disposition": "DID_NOT_SURVIVE_STAGE2",
+        "strategy_id": "session_continuation_signals"
+      },
+      {
+        "batch": "batch1_wave2",
+        "disposition": "DID_NOT_SURVIVE_TO_VALIDATION",
+        "strategy_id": "F1_failed_bollinger_rejection"
+      },
+      {
+        "batch": "batch1_wave2",
+        "disposition": "PAIR_SPECIFIC_VALIDATION_REJECTED",
+        "strategy_id": "F2_fresh_fvg_mitigation"
+      },
+      {
+        "batch": "batch1_wave2",
+        "disposition": "PAIR_SPECIFIC_VALIDATION_REJECTED",
+        "strategy_id": "F3_volatility_squeeze_breakout"
+      },
+      {
+        "batch": "batch2",
+        "disposition": "FTMO_ALPHA_DIAGNOSTIC_REJECTED",
+        "strategy_id": "B2F1_sweep_bos_retest"
+      },
+      {
+        "batch": "batch2",
+        "disposition": "ZERO_PASSING_DEVELOPMENT_CONFIGS",
+        "strategy_id": "B2F2_previous_period_sweep_rejection"
+      },
+      {
+        "batch": "batch2",
+        "disposition": "ZERO_PASSING_DEVELOPMENT_CONFIGS",
+        "strategy_id": "B2F3_sweep_choch_retracement"
+      },
+      {
+        "batch": "batch2",
+        "disposition": "ZERO_PASSING_DEVELOPMENT_CONFIGS",
+        "strategy_id": "B2F4_compression_box_breakout"
+      }
+    ]
+  },
+  "firewall": {
+    "partition_boundaries": {
+      "development_end_exclusive_utc": "2023-04-11T00:00:00Z",
+      "development_start_utc": "2019-03-11T00:00:00Z",
+      "holdout_start_utc": "2024-08-21T00:00:00Z",
+      "source": "ftmoquant.research.stage_g (reused unchanged, not redefined)",
+      "validation_start_utc": "2023-04-11T00:00:00Z"
+    },
+    "rules": [
+      "Batch 3 family choice, parameters, grids, gates, and thresholds may not be altered using any Batch 3 VALIDATION result.",
+      "final holdout remains completely sealed; no Batch 3 stage accesses it.",
+      "prior VALIDATION observations from earlier strategy families (including B2F1's observed long/short asymmetry) must not be used to construct pair- or direction-specific Batch 3 exceptions; the directional_robustness gate above is declared symmetrically and a priori for exactly this reason."
+    ]
+  },
+  "ftmo_development_gates": {
+    "cross_subperiod_stability": {
+      "mechanism": "run the identical frozen Monte Carlo methodology (same sizing policy, same bootstrap method, same 100,000-replication count) independently on each half's trades",
+      "rule": "pass_both(weaker_half) / pass_both(stronger_half) >= 0.60, where 'weaker'/'stronger' is determined by which half has the lower/higher pass_both value",
+      "split": {
+        "derivation": "deterministic floor(span/2)-day midpoint of the frozen DEVELOPMENT interval, computed from stage_g's frozen constants alone -- no return, price, or trade data inspected to place this boundary; coincides exactly with the temporal_stability fold-2/fold-3 boundary above",
+        "half_1_utc": [
+          "2019-03-11T00:00:00Z",
+          "2021-03-26T00:00:00Z"
+        ],
+        "half_2_utc": [
+          "2021-03-26T00:00:00Z",
+          "2023-04-11T00:00:00Z"
+        ]
+      },
+      "zero_denominator_handling": "if the stronger half's pass_both is exactly 0, the ratio is undefined and the gate is treated as FAILED (a stronger half at 0% pass_both already implies economic failure regardless of the ratio)",
+      "zero_trade_half_handling": "if either half has zero completed trades for a sleeve, the gate is treated as FAILED for that sleeve -- a family that clusters all its DEVELOPMENT trades into a single half is exactly the concentration pattern this gate exists to catch"
+    },
+    "drawdown": {
+      "applicable_target": "the Verification-phase profit target in dollars at the $100,000 research notional (5% = $5,000), used as the binding target because Verification is the stricter of the two chained phases a candidate must clear",
+      "mechanism": "p95_max_drawdown as already emitted by ftmoquant.research.ftmo_pass_probability.reporting, at the sleeve's frozen sizing policy",
+      "rule": "p95_max_drawdown_usd < 0.60 * 5000 == $3,000"
+    },
+    "full_development_pass_both": {
+      "mechanism": "reuse ftmoquant.research.ftmo_pass_probability.monte_carlo/bootstrap/reporting unchanged: 100,000-replication stationary block bootstrap, block length derived via derive_frozen_block_length on DEVELOPMENT trades only, at the sleeve's frozen sizing policy (see sizing_selection_procedure)",
+      "rule": "pass_both >= 0.70"
+    }
+  },
+  "lifecycle": {
+    "development_accessed": false,
+    "holdout_accessed": false,
+    "validation_accessed": false
+  },
+  "preregistration_semantic_sha256": "82e00f5e5b3a7cf4269bd61163bf8ea4058a31e6414b1fed0077c820a417a68b",
+  "preregistration_version": "batch3-methodology-preregistration-1",
+  "prop_rule_set": {
+    "config_path": "config/prop/ftmo_2step_swing_2026-08.yaml",
+    "config_sha256": "8f3af9eb9d053dac5c3604d000bcf9017a1c8e2c708e340e733a72801a2346bf",
+    "rule_set_id": "ftmo_2step_swing"
+  },
+  "purpose": "Freeze the approved Batch 3 research protocol before any Batch 3 DEVELOPMENT analysis occurs.",
+  "sizing_selection_procedure": {
+    "expansion_prohibition": "no further sizing grid expansion is permitted after Stage 2 results are observed, matching the existing repo-wide SIZING_GRID/NOTIONAL_REFINEMENT_GRID precedent and norm",
+    "prohibition": "VALIDATION data must never be used to select or tune sizing",
+    "stage_1": {
+      "mechanism": "reuse the existing, unmodified 8-policy ftmoquant.research.ftmo_pass_probability.sizing.SIZING_GRID at the existing 20,000-path exploratory replication count, on DEVELOPMENT trades only, independently per surviving sleeve",
+      "selection_rule": "the single policy with the highest pass_both"
+    },
+    "stage_2": {
+      "construction_rule_fixed_fractional_risk": "if Stage 1 selects a fixed_fractional_risk policy with value r, the refinement grid is exactly the 9 multipliers {0.50, 0.65, 0.75, 0.85, 0.95, 1.05, 1.15, 1.25, 1.50} applied to r, each floored at 0.001 (0.1%) and capped at 0.05 (5%, since risking more than the daily loss limit on a single trade is economically incoherent)",
+      "construction_rule_fixed_notional_multiplier": "if Stage 1 selects a fixed_notional_multiplier policy with value m, the refinement grid is exactly the 9 offsets {-0.50, -0.35, -0.25, -0.15, -0.05, +0.05, +0.15, +0.25, +0.50} applied to m, each floored at a minimum multiplier of 0.1x",
+      "mechanism": "a new, disjoint, 9-policy local-refinement grid, mirroring the existing NOTIONAL_REFINEMENT_GRID precedent, centered on the Stage 1-selected policy's own family and value",
+      "mechanism_run": "the full 100,000-replication precision Monte Carlo across the 9-policy refinement grid",
+      "selection_rule": "the single policy with the highest pass_both becomes the sleeve's frozen sizing policy for every remaining Batch 3 gate and for VALIDATION"
+    }
+  },
+  "stage": "B3.0",
+  "validation_partition": {
+    "end_exclusive_utc": "2024-08-21T00:00:00Z",
+    "start_utc": "2023-04-11T00:00:00Z"
+  },
+  "validation_policy": {
+    "access_model": "one_shot_per_frozen_candidate",
+    "additional_diagnostics": "the existing alpha_diagnostic.py-style diagnostics (rolling expectancy, monthly/quarterly stability, subgroup audit, chronological replay) may be reported for a candidate that passes A/B/C, but must NOT become an additional post-hoc pass/fail rule -- only A, B, and C gate VALIDATION",
+    "on_failure": "retire the candidate; no VALIDATION-informed retuning, parameter substitution, pair substitution, or rerun",
+    "precommitted_gates": {
+      "A_native_spread_positive_return": "native-spread VALIDATION net_return > 0",
+      "B_native_spread_positive_sharpe": "native-spread VALIDATION annualized_sharpe > 0",
+      "C_ftmo_pass_both": "FTMO pass_both >= 0.70 on VALIDATION trades, computed using the exact frozen sizing policy and bootstrap method selected on DEVELOPMENT -- no re-selection, mirroring the existing FROZEN_POLICY_ID/FROZEN_METHOD hardcoding precedent in ftmoquant.research.ftmo_pass_probability.validation_diagnostic",
+      "validation_passed": "A AND B AND C"
+    },
+    "preconditions_before_validation_access": [
+      "frozen signal implementation",
+      "frozen pair/instrument universe",
+      "frozen parameters",
+      "frozen execution semantics",
+      "frozen sizing (Stage 2 refinement policy from sizing_selection_procedure)",
+      "frozen preregistration document with a verified self-hash"
+    ]
+  }
+}

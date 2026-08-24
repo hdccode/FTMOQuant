@@ -1,0 +1,444 @@
+{
+  "breadth_rules": {
+    "B5A_cftc_dealer_demand_shock_fx": {
+      "aggregate": "equal-weight all seven sleeves; failed sleeves are not dropped",
+      "sleeve": "one frozen currency-k versus USD mapping",
+      "sleeves_passing_all_sleeve_gates_gte": 4,
+      "sleeves_positive_native_and_1_5x_expectancy_gte": 5
+    },
+    "B5B_direct_audcad_mean_reversion": {
+      "breadth": "not_applicable_intrinsically_single_instrument",
+      "single_sleeve_must_pass_all_gates": true,
+      "sleeve": "the single direct AUD/CAD instrument"
+    },
+    "B5C_daily_fx_overreaction_reversal": {
+      "aggregate": "equal-weight all five sleeves; failed sleeves are not dropped",
+      "sleeve": "one of the five source-frozen direct pairs",
+      "sleeves_passing_all_sleeve_gates_gte": 2,
+      "sleeves_positive_native_and_1_5x_expectancy_gte": 3
+    }
+  },
+  "common_development_gates": {
+    "all_applicable_gates_required": true,
+    "chronological_stability": {
+      "fold_construction": "four contiguous equal-duration DEVELOPMENT intervals fixed from the partition boundaries before prices; boundary ties go to the later fold",
+      "fold_count": 4,
+      "positive_net_return_folds_gte": 3
+    },
+    "costs": {
+      "native": "genuine paired OANDA BID/ASK at every fill",
+      "net_expectancy_gt_at_each_stress": 0,
+      "post_hoc_scalar_cost_subtraction_forbidden": true,
+      "reuse": "ftmoquant.research.alpha_lab.cost_stress.widen_bid_ask_frame",
+      "stress_multipliers": [
+        1.5,
+        2.0
+      ]
+    },
+    "drawdown": {
+      "equal_weight_family_aggregate_maximum_drawdown_lte": 0.15,
+      "equity_basis": "USD 100000 initial equity per sleeve; no FTMO leverage or sizing"
+    },
+    "evaluation_order": "sleeve gates, then immutable all-sleeve aggregate, then breadth",
+    "justification": "Positive edge, PF 1.10, 3-of-4 time stability, 2x spread survival, winner/year robustness, and a 15% research drawdown cap are frozen as a conservative alpha screen; family observation floors differ by natural frequency.",
+    "largest_winners": {
+      "remaining_net_expectancy_gt": 0,
+      "remove": "top ceil(5%) of strictly profitable independent evaluation units",
+      "tie_break": "earlier UTC exit removed first"
+    },
+    "native_expectancy": {
+      "net_expectancy_account_currency_gt": 0
+    },
+    "native_net_return": {
+      "net_return_gt": 0
+    },
+    "native_profit_factor": {
+      "profit_factor_gt": 1.1
+    },
+    "period_concentration": {
+      "attribution": "UTC calendar year of exit",
+      "max_single_year_share_of_strictly_positive_profit_lte": 0.4,
+      "nonpositive_denominator": "fail_closed",
+      "profitable_calendar_year_fraction_gte": 0.6
+    }
+  },
+  "created_at_utc": "2026-08-24T00:00:00Z",
+  "data_firewall": {
+    "backtest_run": false,
+    "development_prices_returns_pnl_or_performance_accessed": false,
+    "final_holdout_accessed": false,
+    "parameter_tuning_from_repository_data": false,
+    "permitted_access": [
+      "source code",
+      "methodology configs",
+      "instrument identifiers",
+      "literature and regulator documentation"
+    ],
+    "signal_or_execution_implemented": false,
+    "validation_accessed": false
+  },
+  "development_to_validation": {
+    "eligibility": "all common, family-specific, aggregate, and breadth gates pass",
+    "failure_action": "retire representative and family under frozen definition",
+    "maximum_representatives_per_family": 1,
+    "one_shot_validation_gates_all_required": {
+      "breadth_minimum_unchanged": true,
+      "native_net_return_gt": 0,
+      "native_profit_factor_gt": 1.0,
+      "stress_1_5x_net_expectancy_gt": 0
+    },
+    "representative_selection": {
+      "B5A_cftc_dealer_demand_shock_fx": "the sole frozen seven-sleeve equal-weight configuration",
+      "B5B_direct_audcad_mean_reversion": "the sole frozen direct AUD/CAD configuration",
+      "B5C_daily_fx_overreaction_reversal": "the sole frozen five-sleeve equal-weight configuration",
+      "tie_break_if_schema_error_creates_duplicate": "fail closed; duplicates are not ranked or selected"
+    },
+    "rescue_forbidden": [
+      "sign inversion",
+      "nearby parameter",
+      "alternate pair",
+      "alternate holding period",
+      "threshold relaxation",
+      "favorable seed retry",
+      "alternate data vintage"
+    ],
+    "validation_in_this_task": false
+  },
+  "diagnostics": {
+    "fields": [
+      "year and chronological-fold scorecards",
+      "long-short decomposition",
+      "largest one/three/five winner contribution",
+      "cost as fraction of gross edge",
+      "event or signal counts by year and sleeve",
+      "holding duration and skipped occurrence reasons",
+      "B5A release lag and revision audit"
+    ],
+    "status": "report_only_never_gate_rank_filter_or_rescue"
+  },
+  "execution_contract_for_future_implementation": {
+    "account_currency": "USD",
+    "entry_and_exit": "first strictly-later observation after decision timestamp",
+    "fills": "BUY at ASK; SELL at BID; exit at opposite executable side",
+    "ftmo_sizing_or_optimization": false,
+    "interpolation_or_midpoint_fills": false,
+    "market_data": "native genuine paired OANDA M1 BID/ASK",
+    "pnl_conversion": "reuse existing account-currency conversion; direct USD quote needs none, USD base converts quote P&L once using executable conversion, and non-USD crosses require a causal native USD conversion quote",
+    "reference_notional": "fixed USD 100000 gross per sleeve/cohort",
+    "status": "semantics_frozen_signals_and_execution_not_implemented"
+  },
+  "families": {
+    "B5A_cftc_dealer_demand_shock_fx": {
+      "causal_publication_contract": {
+        "duplicate_or_corrected_files": "retain immutable retrieval timestamp and content hash; earliest valid published vintage governs historical formation",
+        "entry": "first strictly-later paired OANDA M1 observation",
+        "holidays": "use actual CFTC release schedule/timestamp; never assume Friday",
+        "missing_release": "do not form month until released; no interpolation",
+        "nominal_release": "Friday 15:30 America/New_York for prior Tuesday",
+        "report_date_is_never_availability_date": true,
+        "revisions": "use first archived vintage actually available at signal time; later revisions apply prospectively only and never rewrite old signals",
+        "signal_available_at": "maximum actual CFTC publication timestamp among every report whose as-of date is in month m, and never before calendar month m ends"
+      },
+      "hypothesis": "After an increase (decrease) in scaled Dealer/Intermediary net-long futures positioning in currency k, currency k appreciates (depreciates) against USD over the subsequent three months, net of native costs.",
+      "priority": "highest",
+      "screening": {
+        "independent_unit": "non-overlapping three-month cohort per sleeve",
+        "minimum_distinct_calendar_years": 3,
+        "minimum_monthly_formation_dates_per_sleeve": 36,
+        "minimum_nonoverlapping_three_month_units_per_sleeve": 12
+      },
+      "sleeves": [
+        {
+          "currency_k": "JPY",
+          "negative_delta_position_side": "BUY",
+          "positive_delta_position_side": "SELL",
+          "sleeve_id": "B5A_JPY",
+          "spot_instrument": "USD/JPY.OANDA"
+        },
+        {
+          "currency_k": "CHF",
+          "negative_delta_position_side": "BUY",
+          "positive_delta_position_side": "SELL",
+          "sleeve_id": "B5A_CHF",
+          "spot_instrument": "USD/CHF.OANDA"
+        },
+        {
+          "currency_k": "EUR",
+          "negative_delta_position_side": "SELL",
+          "positive_delta_position_side": "BUY",
+          "sleeve_id": "B5A_EUR",
+          "spot_instrument": "EUR/USD.OANDA"
+        },
+        {
+          "currency_k": "GBP",
+          "negative_delta_position_side": "SELL",
+          "positive_delta_position_side": "BUY",
+          "sleeve_id": "B5A_GBP",
+          "spot_instrument": "GBP/USD.OANDA"
+        },
+        {
+          "currency_k": "CAD",
+          "negative_delta_position_side": "BUY",
+          "positive_delta_position_side": "SELL",
+          "sleeve_id": "B5A_CAD",
+          "spot_instrument": "USD/CAD.OANDA"
+        },
+        {
+          "currency_k": "AUD",
+          "negative_delta_position_side": "SELL",
+          "positive_delta_position_side": "BUY",
+          "sleeve_id": "B5A_AUD",
+          "spot_instrument": "AUD/USD.OANDA"
+        },
+        {
+          "currency_k": "NZD",
+          "negative_delta_position_side": "SELL",
+          "positive_delta_position_side": "BUY",
+          "sleeve_id": "B5A_NZD",
+          "spot_instrument": "NZD/USD.OANDA"
+        }
+      ],
+      "source_faithful_replication": {
+        "direction": "positive delta_f_star: long currency k versus USD; negative: short currency k versus USD",
+        "formation_frequency": "calendar monthly",
+        "holding_period": "three calendar months from actual entry fill",
+        "legacy_commercial_substitution_permitted": false,
+        "market_scope": "CME currency futures versus USD",
+        "monthly_open_interest": "arithmetic mean of total open interest over the same weekly reports",
+        "monthly_position": "arithmetic mean of all weekly net positions with CFTC as-of dates inside calendar month m",
+        "overlap": "up to three equal-notional monthly cohorts per sleeve",
+        "permitted_robustness_variants": [],
+        "position_as_of": "close of report-date Tuesday (or CFTC-declared as-of date)",
+        "rebalance_frequency": "monthly independent cohorts",
+        "report": "CFTC Traders in Financial Futures, Futures Only",
+        "scaled_position_formula": "f_star[k,m] = 100 * monthly_dealer_net[k,m] / mean(monthly_open_interest[k,m-j] for j=0..11)",
+        "signal": "delta_f_star[k,m] = f_star[k,m] - f_star[k,m-1]",
+        "threshold": "strict sign only; zero means flat/no new cohort",
+        "trader_category": "Dealer/Intermediary long and short",
+        "weekly_net_position": "Dealer/Intermediary long contracts minus short contracts",
+        "weighting": "equal USD gross notional per active cohort and sleeve"
+      }
+    },
+    "B5B_direct_audcad_mean_reversion": {
+      "hypothesis": "The directly tradable AUD/CAD cross mean reverts around its trailing 20-FX-day moving mean, so holding the opposite sign of the completed daily close deviation has positive net expectancy after native costs.",
+      "implementation_conventions_not_literature_claims": {
+        "decision_timestamp": "17:00 America/New_York daily boundary",
+        "entry_and_exit": "first strictly-later paired OANDA M1 observation",
+        "fills": "BUY at ASK, SELL at BID, opposite executable side on exit",
+        "fixed_reference_notional_usd": 100000,
+        "indicator_price": "completed BID/ASK midpoint close"
+      },
+      "repository_availability_audit": {
+        "present_in_OANDA_ALPHA_LAB_SPECS": false,
+        "present_in_oanda_fx_alpha_lab_v1_config": false,
+        "required_before_future_development": "add AUDCAD/AUD_CAD/AUD/CAD.OANDA as a native paired-M1 OANDA canonical instrument with provider-verified precision, immutable manifests, derived daily boundaries, and DEVELOPMENT-only readiness",
+        "silent_synthesis_forbidden": true
+      },
+      "screening": {
+        "independent_unit": "one non-overlapping daily marked holding return",
+        "minimum_daily_holding_observations": 500,
+        "minimum_distinct_calendar_years": 3,
+        "minimum_position_sign_changes": 20
+      },
+      "source_faithful_replication": {
+        "bar_frequency": "one completed New York FX day",
+        "day": "17:00 America/New_York close to next 17:00 America/New_York close",
+        "direct_instrument_required": true,
+        "direction": "deviation below zero BUY AUD/CAD; above zero SELL AUD/CAD",
+        "entry_threshold": "strictly nonzero deviation; no z-score threshold",
+        "exit_rule": "exit or reverse at first execution opportunity after a completed daily close whose deviation sign is zero or changes sign",
+        "formation_statistic": "deviation = completed daily midpoint close minus arithmetic mean of the 20 completed daily midpoint closes including that close",
+        "instrument": "AUD/CAD.OANDA",
+        "lookback_completed_fx_days": 20,
+        "maximum_holding_period": null,
+        "overlapping_position_policy": "one position only; never scale in",
+        "parameter_variants": [],
+        "rollover": "all broker financing/rollover debits and credits must be included when supported; if unavailable, family cannot pass",
+        "signal_lag": "one completed daily observation",
+        "synthetic_two_leg_substitution_permitted": false
+      }
+    },
+    "B5C_daily_fx_overreaction_reversal": {
+      "forbidden_filters": [
+        "weekday",
+        "session",
+        "volatility_regime",
+        "trend",
+        "news",
+        "spread_quantile"
+      ],
+      "hypothesis": "A two-standard-deviation open-to-close FX move overreacts; the same direct pair has positive net expectancy in the opposite direction over the next complete New York FX day.",
+      "implementation_conventions_not_literature_claims": {
+        "fills": "BUY at ASK, SELL at BID, opposite executable side on exit",
+        "fixed_reference_notional_usd": 100000,
+        "full_next_day_exit": "Replaces the paper's sample-derived pair-specific intraday clocks to avoid clock/session overfitting and keep B5C distinct from Batch 4.",
+        "indicator_price": "completed BID/ASK midpoint OHLC",
+        "new_york_day_definition": "The source uses MetaQuotes daily/hourly bars without establishing a portable venue timezone; 17:00 America/New_York is frozen for causal reproducibility and is not a claimed source parameter.",
+        "thirty_day_window": "The primary paper fixes k=2 but does not uniquely report n; 30 is the smallest conventional monthly-length causal window and is frozen without consulting repository returns."
+      },
+      "literature_anchored_rule": {
+        "daily_return": "completed-day midpoint close / midpoint open - 1",
+        "day": "17:00 America/New_York close to next 17:00 America/New_York close",
+        "direction": "positive event SELL pair; negative event BUY pair",
+        "entry": "first strictly-later paired OANDA M1 observation after day t closes",
+        "estimation_window": "30 immediately preceding completed FX-day returns, excluding the candidate event day",
+        "exit": "first strictly-later paired OANDA M1 observation after the next valid FX-day 17:00 America/New_York boundary",
+        "holding_period": "one complete subsequent New York FX day",
+        "negative_event": "return_t < trailing_mean_30 - 2 * trailing_sample_std_30",
+        "overlap": "at most one position per instrument; overlapping event ignored",
+        "parameter_variants": [],
+        "positive_event": "return_t > trailing_mean_30 + 2 * trailing_sample_std_30",
+        "universe": [
+          "EUR/USD.OANDA",
+          "USD/JPY.OANDA",
+          "USD/CAD.OANDA",
+          "AUD/USD.OANDA",
+          "EUR/JPY.OANDA"
+        ],
+        "weekends_and_holidays": "a valid FX day requires both boundary observations and genuine paired data; otherwise advance to the next valid boundary without filling"
+      },
+      "repository_availability_audit": {
+        "missing_native": [
+          "EUR/JPY.OANDA"
+        ],
+        "native_now": [
+          "EUR/USD.OANDA",
+          "USD/JPY.OANDA",
+          "USD/CAD.OANDA",
+          "AUD/USD.OANDA"
+        ],
+        "required_before_future_development": "add native paired-M1 EURJPY/EUR_JPY/EUR/JPY.OANDA through the same canonical OANDA lineage; no synthetic cross substitution"
+      },
+      "screening": {
+        "independent_unit": "completed one-day event trade",
+        "minimum_distinct_calendar_years_with_events": 3,
+        "minimum_events_family_total": 60,
+        "minimum_events_per_sleeve": 15
+      }
+    }
+  },
+  "family_scope": {
+    "exact_family_count": 3,
+    "extra_or_deferred_families": [],
+    "primary_exact": [
+      "B5A_cftc_dealer_demand_shock_fx",
+      "B5B_direct_audcad_mean_reversion",
+      "B5C_daily_fx_overreaction_reversal"
+    ]
+  },
+  "hypothesis_accounting": {
+    "B5A_currency_sleeves": 7,
+    "B5B_direct_instrument_sleeves": 1,
+    "B5C_instrument_sleeves": 5,
+    "family_configurations": 3,
+    "robustness_variant_count": 0,
+    "total_executable_sleeve_hypotheses": 13
+  },
+  "lifecycle": {
+    "development_performance_accessed": false,
+    "execution_implemented": false,
+    "ftmo_optimization_run": false,
+    "holdout_accessed": false,
+    "signals_implemented": false,
+    "validation_accessed": false
+  },
+  "preregistration_semantic_sha256": "603c3a80427129b5c3758460c8cce5bc21947546520a3ef38a6e1c42e53fcbdf",
+  "preregistration_version": "batch5-three-independent-fx-alpha-families-v1",
+  "purpose": "freeze Batch 5 methodology before any DEVELOPMENT performance access",
+  "relationship_to_prior_research": {
+    "B5A_cftc_dealer_demand_shock_fx": {
+      "distinct": "uses externally released institutional positions, not prices alone",
+      "diversification_mechanism": "institutional positioning and slow-moving flow"
+    },
+    "B5B_direct_audcad_mean_reversion": {
+      "distinct": "direct stationary cross-rate with no two-leg rolling OLS, ADF selection, Johansen vector, or synthetic spread; therefore not U2",
+      "diversification_mechanism": "direct cross-rate stationary reversion"
+    },
+    "B5C_daily_fx_overreaction_reversal": {
+      "distinct": "contrarian response to an extreme completed daily move, not TSM, Donchian/breakout, relative-value spread, or civil-clock/fix effect",
+      "diversification_mechanism": "behavioral short-horizon overreaction/reversal"
+    },
+    "empirical_correlations_used": false
+  },
+  "reuse_audit": {
+    "account_currency_pnl": "Batch 4 USD-notional and quote-P&L conversion conventions, extended causally for non-USD direct crosses",
+    "canonical_OANDA": "ftmoquant.data.oanda_alpha_lab_development and InstrumentSpec; B5B/B5C missing crosses require additions, not parallel loaders",
+    "chronological_folds": "Batch 3/4 contiguous chronological fold semantics",
+    "native_bid_ask_and_first_later": "ftmoquant.research.alpha_lab.batch4_execution paired-index validation and bisect_right execution conventions",
+    "parallel_implementation_created": false,
+    "partition_firewalls": "ftmoquant.research.stage_g.DevelopmentResearchContext.require_range and OANDA alpha-lab DEVELOPMENT readiness validation",
+    "screening": "Batch 4 expectancy, PF, fold, concentration, winner-removal, cost, breadth, diagnostics, and no-rescue concepts with frequency-specific floors",
+    "transaction_cost_stress": "ftmoquant.research.alpha_lab.cost_stress.widen_bid_ask_frame",
+    "write_once_and_hashing": "Batch 3/4 write-once semantic-hash convention"
+  },
+  "source_provenance": [
+    {
+      "authors": [
+        "Mai Chi Dao",
+        "Pierre-Olivier Gourinchas",
+        "Oleg Itskhoki"
+      ],
+      "caveat": "The paper estimates equilibrium projections, not a transaction-costed trading rule; the sign-only portfolio rule is the preregistered causal operationalization of its directional prediction.",
+      "family": "B5A_cftc_dealer_demand_shock_fx",
+      "primary_claim": "A rise in a dealer's scaled net-long local-currency futures position proxies a demand shift toward USD, coincides with local-currency depreciation, and is followed by smaller persistent predictable local-currency appreciation and positive returns to the post-shock position.",
+      "specification_support": "CFTC TFF Dealer/Intermediary; monthly averages of weekly reports; dealer long minus short divided by the trailing 12-month moving average of monthly total open interest; monthly change; G7+; three-month return horizon",
+      "title": "Breaking Parity: Equilibrium Exchange Rates and Currency Premia",
+      "type": "IMF_working_paper_by_established_researchers",
+      "url": "https://economics.princeton.edu/wp-content/uploads/2025/07/BreakingParityFX.pdf",
+      "version_date": "2025-07-01"
+    },
+    {
+      "authors": [
+        "U.S. Commodity Futures Trading Commission"
+      ],
+      "family": "B5A_cftc_dealer_demand_shock_fx",
+      "supports": "Tuesday as-of positions are generally released Friday at 15:30 America/New_York; holidays can alter the schedule; TFF trader classification and revisions must use the actually published file",
+      "title": "Commitments of Traders: explanatory notes and release schedule",
+      "type": "primary_regulator_documentation",
+      "url": "https://www.cftc.gov/MarketReports/CommitmentsofTraders/index.htm"
+    },
+    {
+      "authors": [
+        "Ernest P. Chan"
+      ],
+      "family": "B5B_direct_audcad_mean_reversion",
+      "limitations": "Practitioner evidence, not peer reviewed; published example does not include native historical bid/ask execution and is not treated as proof",
+      "supports": "Example 5.2 trades the ready-made AUD.CAD cross directly, uses daily closes and a 20-day moving average, and holds the negative sign of the close-minus-moving-average deviation with a one-day lag",
+      "title": "Algorithmic Trading: Winning Strategies and Their Rationale",
+      "type": "publicly_documented_practitioner_book_example",
+      "url": "https://www.wiley.com/en-us/Algorithmic+Trading%3A+Winning+Strategies+and+Their+Rationale-p-9781118460146",
+      "year": 2013
+    },
+    {
+      "authors": [
+        "Guglielmo Maria Caporale",
+        "Alex Plastun"
+      ],
+      "doi": "10.1108/JES-11-2019-0503",
+      "family": "B5C_daily_fx_overreaction_reversal",
+      "journal": "Journal of Economic Studies 48(1), 211-222",
+      "limitations": "The paper omits transaction costs and does not uniquely state the estimation-window length n; its pair-specific intraday exit clocks were sample-derived and are not admitted into this preregistration",
+      "supports": "For EURUSD, USDJPY, USDCAD, AUDUSD, and EURJPY, a day whose open-to-close return exceeds mean plus/minus two standard deviations is followed by contrarian price movement on the next day",
+      "title": "Daily abnormal price changes and trading strategies in the FOREX",
+      "type": "peer_reviewed_open_access",
+      "url": "https://doi.org/10.1108/JES-11-2019-0503",
+      "year": 2021
+    },
+    {
+      "authors": [
+        "Joel Rentzler",
+        "Kishore Tandon",
+        "Susana Yu"
+      ],
+      "doi": "10.1002/fut.20226",
+      "family": "B5C_daily_fx_overreaction_reversal",
+      "journal": "Journal of Futures Markets 26(11), 1089-1130",
+      "supports": "Independent evidence of short-horizon reversals after large one-day moves in major CME currency futures",
+      "title": "Intraday price-reversal patterns in the currency futures market: The impact of the introduction of GLOBEX and the euro",
+      "type": "peer_reviewed_corroboration",
+      "url": "https://doi.org/10.1002/fut.20226",
+      "year": 2006
+    }
+  ],
+  "stage": "B5.0"
+}

@@ -144,6 +144,43 @@ def summarize_policy(
         for o in outcomes
     ]
 
+    return summarize_policy_statistics(
+        policy_id=policy_id,
+        method=method,
+        trials=trials,
+        pass_challenge_count=pass_challenge_count,
+        reached_verification_count=len(reached_verification),
+        pass_verification_count=pass_verification_count,
+        pass_both_count=pass_both_count,
+        fail_daily_loss_count=fail_daily_loss_count,
+        fail_max_loss_count=fail_max_loss_count,
+        censored_count=censored_count,
+        trading_days_to_pass_both=trading_days_to_pass_both,
+        max_drawdowns=max_drawdowns,
+    )
+
+
+def summarize_policy_statistics(
+    *,
+    policy_id: str,
+    method: str,
+    trials: int,
+    pass_challenge_count: int,
+    reached_verification_count: int,
+    pass_verification_count: int,
+    pass_both_count: int,
+    fail_daily_loss_count: int,
+    fail_max_loss_count: int,
+    censored_count: int,
+    trading_days_to_pass_both: Sequence[float],
+    max_drawdowns: Sequence[float],
+) -> PolicySummary:
+    """Build the canonical report from streamed sufficient statistics."""
+
+    if trials <= 0:
+        raise ValueError("trials must be positive")
+    if len(max_drawdowns) != trials:
+        raise ValueError("one max drawdown is required per trial")
     pass_both = wilson_score_interval(pass_both_count, trials)
     return PolicySummary(
         policy_id=policy_id,
@@ -151,8 +188,10 @@ def summarize_policy(
         replications=trials,
         pass_challenge=wilson_score_interval(pass_challenge_count, trials),
         pass_verification_given_challenge=(
-            wilson_score_interval(pass_verification_count, len(reached_verification))
-            if reached_verification
+            wilson_score_interval(
+                pass_verification_count, reached_verification_count
+            )
+            if reached_verification_count
             else wilson_score_interval(0, trials)
         ),
         pass_both=pass_both,

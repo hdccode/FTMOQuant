@@ -1,0 +1,78 @@
+{
+  "amendment_version": "batch5-bc-provider-aware-fx-day-amendment-v1",
+  "amendment_semantic_sha256": "fbdf910c9a89f25743f89c219db1a4b82d5233de63343d8f308955e791bfbb0f",
+  "created_at_utc": "2026-08-24T00:00:00Z",
+  "scope": {
+    "included_families": [
+      "B5B_direct_audcad_mean_reversion",
+      "B5C_daily_fx_overreaction_reversal"
+    ],
+    "excluded_family": "B5A_cftc_dealer_demand_shock_fx",
+    "b5a_policy": "unaffected; do not modify or rerun; original DEVELOPMENT result remains immutable"
+  },
+  "frozen_identities": {
+    "original_batch5_preregistration_semantic_sha256": "603c3a80427129b5c3758460c8cce5bc21947546520a3ef38a6e1c42e53fcbdf",
+    "prior_implementation_correction_protocol_semantic_sha256": "0d534da4717487fa667259ed556a5bc52214fe36e2e3c3d526d096f784a4b454",
+    "prior_exact_boundary_corrected_artifact_root": ".artifacts/alpha_lab/batch5_bc_corrected_development_v1",
+    "prior_exact_boundary_corrected_artifact_hash_manifest_sha256": "ae104501f281bd3eb1e004b030375a2807c284a16e45ec0efcc1eb1d23a1b045"
+  },
+  "provider_semantics": {
+    "provider": "OANDA v20 practice",
+    "granularity": "M1",
+    "timestamp_label": "candle start timestamp",
+    "completion_time": "ts_event plus one minute",
+    "observed_rollover_regime": "ordinary provider no-quote interval may surround 17:00 America/New_York; no candle is synthesized for the gap"
+  },
+  "frozen_boundary_definition": {
+    "timezone": "America/New_York",
+    "boundary_local_time": "17:00:00",
+    "conceptual_interval": "[T0,T1]",
+    "decision_timestamp": "T1 exactly",
+    "open": "the open of the first genuine native paired M1 candle whose start timestamp is at or after T0",
+    "close": "the close of the last genuine native paired M1 candle whose completion time is at or before T1",
+    "causality": "the completed-day close may use only a candle fully completed by T1; no post-T1 observation may influence it",
+    "execution": "first strictly-later executable genuine native paired M1 observation after decision timestamp T1"
+  },
+  "calendar_membership": {
+    "candidate_close_dates": "Monday through Friday in America/New_York only",
+    "open_membership": "T0 <= candle start < T1 and the candle start has the same America/New_York civil date as T0",
+    "close_membership": "T0 < candle completion <= T1 and the candle completion has the same America/New_York civil date as T1",
+    "monday_day": "Sunday 17:00 America/New_York through Monday 17:00 America/New_York",
+    "friday_day": "Thursday 17:00 America/New_York through Friday 17:00 America/New_York",
+    "weekend_policy": "Saturday and Sunday close dates are never candidates; lookup may not cross a New York civil date to bridge a weekend, full-day holiday closure, missing-data day, or partial dataset edge",
+    "holiday_or_missing_policy": "reject the intended weekday FX day unless genuine paired observations satisfy both civil-date membership rules",
+    "tunable_tolerance_minutes": null
+  },
+  "prohibited": [
+    "interpolation",
+    "forward fill",
+    "backward fill",
+    "midpoint synthesis across a gap",
+    "synthetic 17:00 candle",
+    "using the first post-boundary quote as the prior day close",
+    "using any post-boundary observation in the completed-day statistic",
+    "inventing Saturday or Sunday FX days",
+    "bridging a full-day holiday or missing-data closure",
+    "tuning a minute tolerance",
+    "trying another boundary convention after observing the amended rerun"
+  ],
+  "unchanged_semantics": {
+    "B5B": "AUD/CAD native; exactly 20 completed closes including current; below mean long, above mean short; one position; reverse on sign crossing; native, 1.5x, and 2.0x costs; rollover-supported requirement and all original gates unchanged",
+    "B5C": "frozen five-pair universe; completed-day open-to-close return; prior 30 completed returns; sample SD; strict plus/minus 2 SD; contrarian next complete FX day; one position per instrument; native, 1.5x, and 2.0x costs; all original gates and breadth unchanged"
+  },
+  "governance_disclosure": {
+    "created_after_original_development_screen": true,
+    "prior_exact_boundary_result": "the exact-boundary implementation produced structurally truncated 2019-2021 B5B/B5C daily samples",
+    "truncated_b5b_b5c_performance_already_observed": true,
+    "clarification_basis": "provider timestamp and rollover semantics only",
+    "alternative_boundary_convention_evaluated_economically": false,
+    "independent_preregistration_evidence": false,
+    "maximum_provider_aware_corrected_development_runs": 1,
+    "further_boundary_convention_after_outcome_prohibited": true,
+    "validation_access_prohibited": true,
+    "holdout_access_prohibited": true,
+    "strategy_or_parameter_change": false,
+    "corrected_result_status": "DEVELOPMENT evidence only and post-observation methodology clarification"
+  },
+  "one_shot_corrected_output": ".artifacts/alpha_lab/batch5_bc_provider_aware_development_v1"
+}
